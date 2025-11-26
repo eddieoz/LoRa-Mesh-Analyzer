@@ -20,11 +20,17 @@ The monitor runs a continuous loop (every 60 seconds) and performs the following
     *   **Placement Verification**: Flags `ROUTER` or `REPEATER` nodes that do not have a valid GPS position.
     *   **Router Density**: Flags `ROUTER` nodes that are physically too close (< 500m) to each other, indicating redundancy.
 
-### 2. Geospatial Analysis
+### 2. Auto-Discovery of Targets
+If `priority_nodes` is empty in `config.yaml`, the monitor will automatically select targets based on:
+- **Roles**: Prioritizes `ROUTER`, `ROUTER_CLIENT`, `REPEATER`, then `CLIENT` (configurable).
+- **Geolocation**: Selects a mix of the nearest and furthest nodes to test both neighborhood and long-range connectivity.
+- **Limit**: Configurable limit (default 5) to keep the test cycle manageable.
+
+### 3. Geospatial Analysis
 *   **Signal vs Distance**: Flags nodes that are close (< 1km) but have poor SNR (< -5dB), indicating potential hardware issues or obstructions.
 *   **Distance Calculation**: Uses GPS coordinates to calculate distances between nodes for topology analysis.
 
-### 3. Local Configuration Analysis (On Boot)
+### 4. Local Configuration Analysis (On Boot)
 *   **Role Check**: Warns if the monitoring node itself is set to `ROUTER` or `ROUTER_CLIENT` (Monitoring is best done as `CLIENT`).
 *   **Hop Limit**: Warns if the default hop limit is > 3, which can cause network congestion.
 

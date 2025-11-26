@@ -8,6 +8,7 @@ import meshtastic.tcp_interface
 import meshtastic.util
 from .analyzer import NetworkHealthAnalyzer
 from .active_tests import ActiveTester
+from .reporter import NetworkReporter
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -24,6 +25,7 @@ class MeshMonitor:
         self.interface_type = interface_type
         self.hostname = hostname
         self.analyzer = NetworkHealthAnalyzer(ignore_no_position=ignore_no_position)
+        self.reporter = NetworkReporter()
         self.active_tester = None 
         self.running = False
         self.config = self.load_config(config_file)
@@ -35,6 +37,7 @@ class MeshMonitor:
         logger.setLevel(log_level)
         logging.getLogger().setLevel(log_level) # Set root logger too to capture lib logs if needed
         logger.info(f"Log level set to: {log_level_str}")
+        self.last_analysis_time = 0
 
     def load_config(self, config_file):
         if os.path.exists(config_file):
@@ -62,10 +65,20 @@ class MeshMonitor:
             self.check_local_config()
 
             priority_nodes = self.config.get('priority_nodes', [])
+            auto_discovery_roles = self.config.get('auto_discovery_roles', ['ROUTER', 'REPEATER'])
+            auto_discovery_limit = self.config.get('auto_discovery_limit', 5)
+
             if priority_nodes:
                 logger.info(f"Loaded {len(priority_nodes)} priority nodes for active testing.")
+            else:
+                logger.info(f"No priority nodes found. Auto-discovery enabled (Limit: {auto_discovery_limit}, Roles: {auto_discovery_roles})")
             
-            self.active_tester = ActiveTester(self.interface, priority_nodes=priority_nodes)
+            self.active_tester = ActiveTester(
+                self.interface, 
+                priority_nodes=priority_nodes,
+                auto_discovery_roles=auto_discovery_roles,
+                auto_discovery_limit=auto_discovery_limit
+            )
             
             # ... subscriptions ...
             pub.subscribe(self.on_receive, "meshtastic.receive")
@@ -175,7 +188,11 @@ class MeshMonitor:
                 text = packet.get('decoded', {}).get('text', '')
                 logger.info(f"Received Message: {text}")
             elif portnum == 'TRACEROUTE_APP': 
-                 logger.info(f"Received Traceroute Packet: {packet}")
+                 logger.debug(f"Received Traceroute Packet: {packet}")
+                 if self.active_tester:
+                     # Calculate RTT if possible (requires original send time, which we track in active_tester)
+                     rtt = time.time() - self.active_tester.last_test_time
+                     self.active_tester.record_result(packet.get('fromId'), packet.get('decoded', {}), rtt=rtt)
 
         except Exception as e:
             logger.error(f"Error parsing packet: {e}")
@@ -191,31 +208,48 @@ class MeshMonitor:
         logger.info("Starting monitoring loop...")
         while self.running:
             try:
-                logger.info("--- Running Network Analysis ---")
-                nodes = self.interface.nodes
-                
-                # Get local node info for distance calculations
-                my_node = None
-                if hasattr(self.interface, 'localNode'):
-                    my_node = self.interface.localNode
-                
-                # Run Analysis
-                issues = self.analyzer.analyze(nodes, packet_history=self.packet_history, my_node=my_node)
-                
-                # Report Issues
-                if issues:
-                    logger.warning(f"Found {len(issues)} potential issues:")
-                    for issue in issues:
-                        logger.warning(f"  - {issue}")
-                else:
-                    logger.info("No critical issues found in current scan.")
+                # Run Analysis every 60 seconds
+                current_time = time.time()
+                if current_time - self.last_analysis_time >= 60:
+                    logger.debug("--- Running Network Analysis ---")
+                    nodes = self.interface.nodes
+                    
+                    # Get local node info for distance calculations
+                    my_node = None
+                    if hasattr(self.interface, 'localNode'):
+                        my_node = self.interface.localNode
+                    
+                    # Run Analysis
+                    issues = self.analyzer.analyze(nodes, packet_history=self.packet_history, my_node=my_node)
+                    
+                    # Report Issues
+                    if issues:
+                        logger.warning(f"Found {len(issues)} potential issues:")
+                        for issue in issues:
+                            logger.warning(f"  - {issue}")
+                    else:
+                        logger.debug("No critical issues found in current scan.")
+                    
+                    self.last_analysis_time = current_time
 
-                # Run Active Tests
+                # Check for Reporting Trigger
+                if self.active_tester:
+                    report_cycles = self.config.get('report_cycles', 1)
+                    if self.active_tester.completed_cycles >= report_cycles:
+                        logger.info(f"Reporting threshold reached ({self.active_tester.completed_cycles} cycles). Generating report...")
+                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [])
+                        
+                        # Reset cycle count and results
+                        self.active_tester.completed_cycles = 0
+                        self.active_tester.test_results = []
+
+                # Run Active Tests (checks its own interval)
                 if self.active_tester:
                     self.active_tester.run_next_test()
 
                 # Wait for next scan
-                time.sleep(60) 
+                time.sleep(1) 
+            # ... exceptions ... 
             # ... exceptions ...
             except KeyboardInterrupt:
                 logger.info("Stopping monitor...")

@@ -6,5 +6,20 @@ priority_nodes:
   # - "!12345678" 
    - "!d75ae2a0"
 
-# Logging Level [info|debug]
+# Logging Level [warn|info|debug]
 log_level: info
+
+# Auto-Discovery Settings (Used if priority_nodes is empty)
+# Roles to prioritize for auto-discovery
+auto_discovery_roles:
+  - ROUTER
+  - ROUTER_CLIENT
+  - REPEATER
+  - CLIENT
+
+# Limit number of auto-discovered nodes
+auto_discovery_limit: 5
+
+# Reporting Settings
+# Generate report after N full testing cycles
+report_cycles: 1

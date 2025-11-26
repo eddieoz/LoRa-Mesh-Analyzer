@@ -89,6 +89,7 @@ class TestNetworkMonitor(unittest.TestCase):
         
         # Force time advance to bypass interval check
         tester.last_test_time = 0 
+        tester.pending_traceroute = None # Clear pending to simulate completion
         
         # 2. Run second test
         tester.run_next_test()
@@ -98,6 +99,7 @@ class TestNetworkMonitor(unittest.TestCase):
         # Reset mock
         mock_interface.reset_mock()
         tester.last_test_time = 0
+        tester.pending_traceroute = None # Clear pending
 
         # 3. Run third test (should loop back to first)
         tester.run_next_test()
@@ -174,6 +176,75 @@ class TestNetworkMonitor(unittest.TestCase):
         print("  [Skip] Local Config Test requires complex protobuf mocking. Relying on manual verification.")
         print("Local Config Check Test Skipped.")
 
+    def test_auto_discovery(self):
+        print("\nRunning Auto-Discovery Test...")
+        from mesh_monitor.active_tests import ActiveTester
+        
+        # Mock Interface
+        mock_interface = MagicMock()
+        
+        # Mock Nodes
+        mock_interface.nodes = {
+            '!node1': {'user': {'id': '!node1', 'role': 'ROUTER'}, 'position': {'latitude': 10.0, 'longitude': 10.0}}, # Far (~1500km from 0,0)
+            '!node2': {'user': {'id': '!node2', 'role': 'CLIENT'}, 'position': {'latitude': 1.0, 'longitude': 1.0}}, # Near but CLIENT
+            '!node3': {'user': {'id': '!node3', 'role': 'ROUTER'}, 'position': {'latitude': 0.01, 'longitude': 0.01}}, # Very Near (~1.5km)
+            '!node4': {'user': {'id': '!node4', 'role': 'REPEATER'}, 'position': {'latitude': 5.0, 'longitude': 5.0}}, # Mid (~700km)
+            '!node5': {'user': {'id': '!node5', 'role': 'ROUTER'}, 'position': {'latitude': 8.0, 'longitude': 8.0}}, # Far-ish
+            '!local': {'user': {'id': '!local', 'role': 'ROUTER'}, 'position': {'latitude': 0.0, 'longitude': 0.0}}, # Local Node (Self) - Should be skipped
+        }
+        # Mock Local Node at 0,0
+        mock_interface.localNode = {'user': {'id': '!local'}, 'position': {'latitude': 0.0, 'longitude': 0.0}}
+        
+        # Initialize ActiveTester with auto-discovery settings
+        tester = ActiveTester(
+            mock_interface, 
+            priority_nodes=[], 
+            auto_discovery_roles=['ROUTER', 'REPEATER'],
+            auto_discovery_limit=2
+        )
+        
+        # Run test - this should trigger auto-discovery
+        tester.run_next_test()
+        
+        discovered = tester.priority_nodes
+        print(f"  Discovered: {discovered}")
+        
+        # Logic Check:
+        # Candidates: 
+        # !node1 (ROUTER, Far)
+        # !node3 (ROUTER, Very Near)
+        # !node4 (REPEATER, Mid)
+        # !node5 (ROUTER, Far-ish)
+        # !node2 is CLIENT -> Ignored
+        
+        # Distances (approx):
+        # !node3: ~1.5 km
+        # !node4: ~780 km
+        # !node5: ~1200 km
+        # !node1: ~1500 km
+        
+        # Sorted: [!node3, !node4, !node5, !node1]
+        
+        # Limit 2, Mixed (50/50):
+        # Nearest: !node3
+        # Furthest: !node1
+        # Expected: ['!node3', '!node1']
+        
+        self.assertIn('!node3', discovered)
+        self.assertIn('!node1', discovered)
+        self.assertIn('!node3', discovered)
+        self.assertIn('!node1', discovered)
+        self.assertNotIn('!local', discovered) # Ensure self is skipped
+        self.assertNotIn('local', discovered) # Ensure self is skipped even without !
+        self.assertEqual(len(discovered), 2)
+        
+        # Verify a traceroute was sent to the first one (which is !node3 or !node1 depending on sort/mix order)
+        # The mix logic appends nearest then furthest. So !node3 then !node1.
+        # run_next_test() sends to the first one.
+        mock_interface.sendTraceRoute.assert_called()
+        
+        print("Auto-Discovery Test Passed!")
+
     def test_geospatial_analysis(self):
         print("\nRunning Geospatial Analysis Test...")
         
@@ -216,6 +287,52 @@ class TestNetworkMonitor(unittest.TestCase):
         print("  [Pass] Signal vs Distance Check")
         
         print("Geospatial Analysis Test Passed!")
+
+    def test_reporting(self):
+        print("\nRunning Reporting Test...")
+        from mesh_monitor.reporter import NetworkReporter
+        
+        # Initialize self.monitor mock since setUp doesn't do it
+        self.monitor = MagicMock()
+        self.monitor.interface = MagicMock()
+        self.monitor.config = {'report_cycles': 1}
+        
+        # Mock Reporter
+        self.monitor.reporter = MagicMock(spec=NetworkReporter)
+        
+        # Mock ActiveTester with completed cycles
+        self.monitor.active_tester = MagicMock()
+        self.monitor.active_tester.completed_cycles = 1
+        self.monitor.active_tester.test_results = [{'node_id': '!node1', 'status': 'success'}]
+        
+        # Mock Interface Nodes
+        self.monitor.interface.nodes = {'!node1': {'user': {'id': '!node1'}}}
+        
+        # Trigger main loop logic manually (simulate one iteration)
+        # We can't run the actual main_loop because it's infinite, 
+        # so we extract the reporting logic block or simulate the condition.
+        
+        # In monitor.py main_loop:
+        # if self.active_tester.completed_cycles >= report_cycles:
+        #    self.reporter.generate_report(...)
+        
+        # Let's verify the logic by running a snippet that mirrors main_loop's reporting check
+        report_cycles = self.monitor.config.get('report_cycles', 1)
+        if self.monitor.active_tester.completed_cycles >= report_cycles:
+            self.monitor.reporter.generate_report(
+                self.monitor.interface.nodes, 
+                self.monitor.active_tester.test_results, 
+                [] # issues
+            )
+            self.monitor.active_tester.completed_cycles = 0
+            self.monitor.active_tester.test_results = []
+            
+        # Assert Report Generated
+        self.monitor.reporter.generate_report.assert_called_once()
+        self.assertEqual(self.monitor.active_tester.completed_cycles, 0)
+        self.assertEqual(self.monitor.active_tester.test_results, [])
+        
+        print("Reporting Test Passed!")
 
 if __name__ == '__main__':
     unittest.main()

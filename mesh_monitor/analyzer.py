@@ -138,7 +138,7 @@ class NetworkHealthAnalyzer:
             if not self.ignore_no_position and (role == 'ROUTER' or role == 'REPEATER'):
                 lat = get_val(position, 'latitude')
                 lon = get_val(position, 'longitude')
-                if not lat or not lon:
+                if lat is None or lon is None:
                      issues.append(f"Config: Node '{node_name}' is '{role}' but has no position. Verify placement.")
 
             # 5. Battery
@@ -258,7 +258,7 @@ class NetworkHealthAnalyzer:
             lat = get_val(pos, 'latitude')
             lon = get_val(pos, 'longitude')
             
-            if is_router and lat and lon:
+            if is_router and lat is not None and lon is not None:
                 routers.append({
                     'id': node_id,
                     'name': get_val(user, 'longName', node_id),
@@ -294,7 +294,7 @@ class NetworkHealthAnalyzer:
         my_lat = get_val(my_pos, 'latitude')
         my_lon = get_val(my_pos, 'longitude')
         
-        if not my_lat or not my_lon:
+        if my_lat is None or my_lon is None:
             return issues # Can't calculate distance relative to me
 
         for node_id, node in nodes.items():
@@ -307,7 +307,7 @@ class NetworkHealthAnalyzer:
             lat = get_val(pos, 'latitude')
             lon = get_val(pos, 'longitude')
             
-            if not lat or not lon:
+            if lat is None or lon is None:
                 continue
 
             # Calculate distance
