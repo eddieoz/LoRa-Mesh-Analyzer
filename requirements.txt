@@ -1,0 +1,4 @@
+meshtastic
+meshtastic
+pypubsub
+PyYAML

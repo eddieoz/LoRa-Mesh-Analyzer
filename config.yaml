@@ -1,0 +1,12 @@
+# Configuration for Meshtastic Network Monitor
+
+# List of Node IDs to prioritize for active testing (Traceroute, etc.)
+# Format: "!<NodeID>"
+priority_nodes:
+  - "!ad2836c3" 
+  - "!51165eae"
+  - "!cdabef97"
+  - "!d75ae2a0"
+
+# Logging Level [info|debug]
+log_level: info
