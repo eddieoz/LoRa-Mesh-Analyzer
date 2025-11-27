@@ -13,7 +13,7 @@ log_level: info
 # Roles to prioritize for auto-discovery
 auto_discovery_roles:
   - ROUTER
-  - ROUTER_CLIENT
+  - ROUTER_LATE
   - REPEATER
   - CLIENT
 

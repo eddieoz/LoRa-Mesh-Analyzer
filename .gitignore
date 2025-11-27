@@ -16,3 +16,5 @@ venv.bak/
 *.log
 
 # Local Config
+config.yaml
+report-*.md

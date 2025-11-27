@@ -30,12 +30,23 @@ If `priority_nodes` is empty in `config.yaml`, the monitor will automatically se
 *   **Signal vs Distance**: Flags nodes that are close (< 1km) but have poor SNR (< -5dB), indicating potential hardware issues or obstructions.
 *   **Distance Calculation**: Uses GPS coordinates to calculate distances between nodes for topology analysis.
 
+### 3. Route Analysis (New!)
+*   **Relay Usage Statistics**: Identifies which nodes are acting as relays most frequently (your network's "backbone").
+*   **Bottleneck Detection**: Flags nodes that are critical for reaching multiple destinations (single points of failure).
+*   **Common Paths**: Analyzes path stability to identify fluctuating routes.
+*   **Link Quality**: Aggregates SNR data to visualize link quality between nodes.
+
 ### 4. Local Configuration Analysis (On Boot)
 *   **Role Check**: Warns if the monitoring node itself is set to `ROUTER` or `ROUTER_CLIENT` (Monitoring is best done as `CLIENT`).
 *   **Hop Limit**: Warns if the default hop limit is > 3, which can cause network congestion.
 
-### 3. Active Testing
-*   **Priority Traceroute**: If configured, the monitor periodically sends traceroute requests to specific "Priority Nodes" to verify connectivity and hop counts.
+### 5. Comprehensive Reporting
+*   Generates a detailed **Markdown Report** (`report-YYYYMMDD-HHMMSS.md`) after each test cycle.
+*   Includes:
+    *   Executive Summary
+    *   Network Health Findings
+    *   Route Analysis (Relays, Bottlenecks)
+    *   Detailed Traceroute Results Table
 
 ## Installation
 
@@ -73,6 +84,9 @@ To prioritize testing specific nodes (e.g., to check if a router is reachable), 
 priority_nodes:
   - "!12345678" 
   - "!87654321"
+
+# Generate report after N full testing cycles
+report_cycles: 1
 ```
 
 The monitor will cycle through these nodes and send traceroute requests to them.

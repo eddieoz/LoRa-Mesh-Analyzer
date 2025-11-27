@@ -38,6 +38,12 @@ class MeshMonitor:
         logging.getLogger().setLevel(log_level) # Set root logger too to capture lib logs if needed
         logger.info(f"Log level set to: {log_level_str}")
         self.last_analysis_time = 0
+        
+        # Discovery State
+        self.discovery_mode = False
+        self.discovery_start_time = 0
+        self.discovery_wait_seconds = self.config.get('discovery_wait_seconds', 60)
+        self.online_nodes = set()
 
     def load_config(self, config_file):
         if os.path.exists(config_file):
@@ -68,18 +74,6 @@ class MeshMonitor:
             auto_discovery_roles = self.config.get('auto_discovery_roles', ['ROUTER', 'REPEATER'])
             auto_discovery_limit = self.config.get('auto_discovery_limit', 5)
 
-            if priority_nodes:
-                logger.info(f"Loaded {len(priority_nodes)} priority nodes for active testing.")
-            else:
-                logger.info(f"No priority nodes found. Auto-discovery enabled (Limit: {auto_discovery_limit}, Roles: {auto_discovery_roles})")
-            
-            self.active_tester = ActiveTester(
-                self.interface, 
-                priority_nodes=priority_nodes,
-                auto_discovery_roles=auto_discovery_roles,
-                auto_discovery_limit=auto_discovery_limit
-            )
-            
             # ... subscriptions ...
             pub.subscribe(self.on_receive, "meshtastic.receive")
             pub.subscribe(self.on_connection, "meshtastic.connection.established")
@@ -87,6 +81,78 @@ class MeshMonitor:
 
             logger.info("Connected to node.")
             self.running = True
+            
+            # Start Discovery Phase if no priority nodes are set
+            if not priority_nodes:
+                logger.info("Auto-discovery mode: Using node database to select targets...")
+                logger.info(f"Will select up to {auto_discovery_limit} nodes matching roles: {auto_discovery_roles}")
+                
+                # Get Local Node ID for self-exclusion
+                local_id = None
+                try:
+                    # Try myInfo first (protobuf object with my_node_num attribute)
+                    if hasattr(self.interface, 'myInfo') and self.interface.myInfo:
+                        my_node_num = getattr(self.interface.myInfo, 'my_node_num', None)
+                        if my_node_num:
+                            # Convert decimal node number to hex ID format (!42bb5074)
+                            local_id = f"!{my_node_num:08x}"
+                    
+                    # Fallback: use localNode
+                    if not local_id and hasattr(self.interface, 'localNode') and self.interface.localNode:
+                        if hasattr(self.interface.localNode, 'user'):
+                            local_id = getattr(self.interface.localNode.user, 'id', None)
+                        elif isinstance(self.interface.localNode, dict):
+                            local_id = self.interface.localNode.get('user', {}).get('id')
+                    
+                    logger.info(f"Local Node ID: {local_id}")
+                except Exception as e:
+                    logger.warning(f"Could not retrieve local node ID: {e}")
+
+                # Create ActiveTester with auto-discovery (no online_nodes needed)
+                self.active_tester = ActiveTester(
+                    self.interface, 
+                    priority_nodes=[],  # Empty - will trigger auto-discovery
+                    auto_discovery_roles=auto_discovery_roles,
+                    auto_discovery_limit=auto_discovery_limit,
+                    online_nodes=set(),  # Not used anymore - discovery uses lastHeard
+                    local_node_id=local_id
+                )
+                
+                logger.info("Active testing started with auto-discovered nodes.")
+
+            else:
+                 # Direct start if priority nodes exist
+                 logger.info(f"Loaded {len(priority_nodes)} priority nodes for active testing.")
+                 
+                 # Get Local Node ID explicitly
+                 local_id = None
+                 try:
+                     # Try myInfo first (protobuf object with my_node_num attribute)
+                     if hasattr(self.interface, 'myInfo') and self.interface.myInfo:
+                         my_node_num = getattr(self.interface.myInfo, 'my_node_num', None)
+                         if my_node_num:
+                             # Convert decimal node number to hex ID format (!42bb5074)
+                             local_id = f"!{my_node_num:08x}"
+                     
+                     # Fallback: use localNode
+                     if not local_id and hasattr(self.interface, 'localNode') and self.interface.localNode:
+                         if hasattr(self.interface.localNode, 'user'):
+                             local_id = getattr(self.interface.localNode.user, 'id', None)
+                         elif isinstance(self.interface.localNode, dict):
+                             local_id = self.interface.localNode.get('user', {}).get('id')
+                     
+                     logger.info(f"Local Node ID: {local_id}")
+                 except Exception as e:
+                     logger.warning(f"Could not retrieve local node ID: {e}")
+
+                 self.active_tester = ActiveTester(
+                    self.interface, 
+                    priority_nodes=priority_nodes,
+                    auto_discovery_roles=auto_discovery_roles,
+                    auto_discovery_limit=auto_discovery_limit,
+                    local_node_id=local_id
+                )
+
             self.main_loop()
 
         except Exception as e:
@@ -178,6 +244,11 @@ class MeshMonitor:
             current_time = time.time()
             self.packet_history = [p for p in self.packet_history if current_time - p['rxTime'] < 60]
 
+            # Track Online Nodes (for Discovery)
+            sender_id = packet.get('fromId')
+            if sender_id:
+                self.online_nodes.add(sender_id)
+
             if packet.get('decoded', {}).get('portnum') == 'ROUTING_APP':
                 # This might be a traceroute response
                 pass
@@ -188,11 +259,14 @@ class MeshMonitor:
                 text = packet.get('decoded', {}).get('text', '')
                 logger.info(f"Received Message: {text}")
             elif portnum == 'TRACEROUTE_APP': 
-                 logger.debug(f"Received Traceroute Packet: {packet}")
+                 logger.info(f"Received Traceroute Packet from {packet.get('fromId')}")
+                 logger.debug(f"Full packet: {packet}")
+                 logger.debug(f"Decoded: {packet.get('decoded', {})}")
                  if self.active_tester:
                      # Calculate RTT if possible (requires original send time, which we track in active_tester)
                      rtt = time.time() - self.active_tester.last_test_time
-                     self.active_tester.record_result(packet.get('fromId'), packet.get('decoded', {}), rtt=rtt)
+                     # Pass the full packet so record_result can extract hopLimit and rxSnr
+                     self.active_tester.record_result(packet.get('fromId'), packet, rtt=rtt)
 
         except Exception as e:
             logger.error(f"Error parsing packet: {e}")
@@ -210,6 +284,9 @@ class MeshMonitor:
             try:
                 # Run Analysis every 60 seconds
                 current_time = time.time()
+                
+                # --- Active Testing & Analysis ---
+
                 if current_time - self.last_analysis_time >= 60:
                     logger.debug("--- Running Network Analysis ---")
                     nodes = self.interface.nodes
@@ -237,11 +314,21 @@ class MeshMonitor:
                     report_cycles = self.config.get('report_cycles', 1)
                     if self.active_tester.completed_cycles >= report_cycles:
                         logger.info(f"Reporting threshold reached ({self.active_tester.completed_cycles} cycles). Generating report...")
-                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [])
+                        
+                        # Get local node for distance calculations
+                        local_node = None
+                        if hasattr(self.interface, 'localNode'):
+                            local_node = self.interface.localNode
+                        
+                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [], local_node=local_node)
                         
                         # Reset cycle count and results
                         self.active_tester.completed_cycles = 0
                         self.active_tester.test_results = []
+                        
+                        logger.info("Report generated. Exiting...")
+                        self.running = False
+                        break
 
                 # Run Active Tests (checks its own interval)
                 if self.active_tester:
