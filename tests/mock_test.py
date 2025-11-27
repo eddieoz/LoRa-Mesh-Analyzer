@@ -168,6 +168,55 @@ class TestNetworkMonitor(unittest.TestCase):
         
         self.assertEqual(selected, expected)
         print("Stratified Discovery Test Passed!")
+
+    def test_cooldown_logic(self):
+        print("\nRunning Cooldown Logic Test...")
+        mock_interface = MagicMock()
+        
+        # Setup
+        tester = ActiveTester(mock_interface, test_interval=30, traceroute_timeout=60)
+        tester.priority_nodes = ["!n1", "!n2"]
+        
+        # 1. Start Test 1
+        tester.run_next_test()
+        self.assertEqual(tester.pending_traceroute, "!n1")
+        start_time = tester.last_test_time
+        
+        # 2. Simulate Timeout (at T+61)
+        # We need to mock time.time() to control flow
+        with patch('time.time') as mock_time:
+            # Initial call was at T0.
+            # Advance to T+61
+            mock_time.return_value = start_time + 61
+            
+            # Run next test -> Should trigger timeout recording
+            tester.run_next_test()
+            
+            # Verify timeout recorded
+            self.assertIsNone(tester.pending_traceroute)
+            self.assertEqual(tester.test_results[-1]['status'], 'timeout')
+            
+            # Verify last_test_time updated to T+61 (Cooldown start)
+            self.assertEqual(tester.last_test_time, start_time + 61)
+            
+            # 3. Try to run next test immediately (at T+62)
+            mock_time.return_value = start_time + 62
+            mock_interface.reset_mock()
+            tester.run_next_test()
+            
+            # Should NOT send because 62 - 61 = 1 < 30
+            mock_interface.sendTraceRoute.assert_not_called()
+            print("  [Pass] Cooldown enforced after timeout")
+            
+            # 4. Advance past cooldown (at T+92)
+            mock_time.return_value = start_time + 92
+            tester.run_next_test()
+            
+            # Should send now
+            mock_interface.sendTraceRoute.assert_called_with("!n2", hopLimit=7)
+            print("  [Pass] Next test sent after cooldown")
+
+        print("Cooldown Logic Test Passed!")
         print("\nRunning Test Interval Config Test...")
         mock_interface = MagicMock()
         

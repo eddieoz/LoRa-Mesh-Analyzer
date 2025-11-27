@@ -334,8 +334,10 @@ class ActiveTester:
             'timestamp': time.time()
         })
         self._check_cycle_completion(node_id)
+        self._check_cycle_completion(node_id)
         if self.pending_traceroute == node_id:
             self.pending_traceroute = None # Clear pending if this was the node we were waiting for
+            self.last_test_time = time.time() # Start cooldown
 
     def record_timeout(self, node_id):
         """
@@ -350,6 +352,7 @@ class ActiveTester:
         self._check_cycle_completion(node_id)
         if self.pending_traceroute == node_id:
             self.pending_traceroute = None # Clear pending if this was the node we were waiting for
+            self.last_test_time = time.time() # Start cooldown
 
     def _check_cycle_completion(self, node_id):
         """

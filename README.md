@@ -61,19 +61,19 @@ If `priority_nodes` is empty in `config.yaml`, the monitor will automatically se
 ### Basic Run (USB/Serial)
 Connect your Meshtastic device via USB and run:
 ```bash
-python3 -m mesh_monitor.monitor
+python3 main.py
 ```
 
 ### Network Connection (TCP)
 If your node is on the network (e.g., WiFi):
 ```bash
-python3 -m mesh_monitor.monitor --tcp 192.168.1.10
+python3 main.py --tcp 192.168.1.10
 ```
 
 ### Options
 *   `--ignore-no-position`: Suppress warnings about routers without a position (useful for portable routers or privacy).
     ```bash
-    python3 -m mesh_monitor.monitor --ignore-no-position
+    python3 main.py --ignore-no-position
     ```
 
 ## Configuration (Priority Testing)

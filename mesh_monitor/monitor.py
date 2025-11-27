@@ -354,7 +354,7 @@ class MeshMonitor:
                 logger.error(f"Error in main loop: {e}")
                 time.sleep(10)
 
-if __name__ == "__main__":
+def main():
     # Simple CLI for testing
     import argparse
     parser = argparse.ArgumentParser(description='Meshtastic Network Monitor')
@@ -367,4 +367,10 @@ if __name__ == "__main__":
     else:
         monitor = MeshMonitor(interface_type='serial', ignore_no_position=args.ignore_no_position)
     
-    monitor.start()
+    try:
+        monitor.start()
+    except KeyboardInterrupt:
+        monitor.stop()
+
+if __name__ == "__main__":
+    main()
