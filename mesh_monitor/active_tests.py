@@ -1,6 +1,8 @@
 import logging
 import time
+import threading
 import meshtastic.util
+from .utils import get_val, haversine
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,9 @@ class ActiveTester:
         self.test_results = [] # List of dicts: {node_id, status, rtt, hops, snr, timestamp}
         self.completed_cycles = 0
         self.nodes_tested_in_cycle = set()
+        
+        # Thread safety
+        self.lock = threading.Lock()
 
     def run_next_test(self):
         """
@@ -51,7 +56,6 @@ class ActiveTester:
 
         # Round-robin through priority nodes
         # Safety check if list changed or index out of bounds
-        # Safety check if list changed or index out of bounds
         if self.current_priority_index >= len(self.priority_nodes):
             self.current_priority_index = 0
             
@@ -69,12 +73,6 @@ class ActiveTester:
         candidates = []
         nodes = self.interface.nodes
         
-        # Helper to get attribute or dict key (same as in analyzer)
-        def get_val(obj, key, default=None):
-            if isinstance(obj, dict):
-                return obj.get(key, default)
-            return getattr(obj, key, default)
-
         # Get local position
         my_lat = None
         my_lon = None
@@ -173,7 +171,7 @@ class ActiveTester:
                     lon = lon_i / 1e7
             
             if my_lat is not None and my_lon is not None and lat is not None and lon is not None:
-                dist = self._haversine(my_lat, my_lon, lat, lon)
+                dist = haversine(my_lat, my_lon, lat, lon)
             
             # Add to bucket
             nodes_by_role[role].append({
@@ -198,11 +196,6 @@ class ActiveTester:
                 continue
                 
             # Sort by lastHeard (Descending - Most Recent) then Distance (Descending - Furthest)
-            # Tuple sort: (lastHeard desc, dist desc)
-            # To sort desc, we can use reverse=True. 
-            # But if we want different directions?
-            # User said: "sort by last_heard, then by distance"
-            # Assuming both descending (most recent, furthest).
             candidates_for_role.sort(key=lambda x: (x['lastHeard'], x['dist']), reverse=True)
             
             # Add to final list
@@ -225,19 +218,6 @@ class ActiveTester:
         selected_ids = [c['id'] for c in final_candidates]
         return selected_ids
 
-    def _haversine(self, lat1, lon1, lat2, lon2):
-        import math
-        try:
-            lon1, lat1, lon2, lat2 = map(math.radians, [float(lon1), float(lat1), float(lon2), float(lat2)])
-            dlon = lon2 - lon1 
-            dlat = lat2 - lat1 
-            a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-            c = 2 * math.asin(math.sqrt(a)) 
-            r = 6371000 # Meters
-            return c * r
-        except:
-            return 0
-
     def send_traceroute(self, dest_node_id):
         """
         Sends a traceroute request to the destination node.
@@ -253,11 +233,11 @@ class ActiveTester:
                 logger.error(f"Failed to send traceroute to {dest_node_id}: {e}")
 
         # Update state immediately so main loop knows we are busy
-        self.last_test_time = time.time()
-        self.pending_traceroute = dest_node_id
+        with self.lock:
+            self.last_test_time = time.time()
+            self.pending_traceroute = dest_node_id
         
         # Start background thread
-        import threading
         t = threading.Thread(target=_send_task, daemon=True)
         t.start() 
 
@@ -310,8 +290,6 @@ class ActiveTester:
             route_back = decoded.get('routeBack', [])
         
         # Count hops (number of nodes in route - 1, excluding source)
-        # Route includes: source -> hop1 -> hop2 -> destination
-        # So hops = len(route) - 1 (we don't count the source)
         hops_to = len(route) - 1 if route and len(route) > 0 else 0
         hops_back = len(route_back) - 1 if route_back and len(route_back) > 0 else 0
         
@@ -322,47 +300,47 @@ class ActiveTester:
         logger.info(f"Route to {node_id}: {' -> '.join(route_ids)} ({hops_to} hops)")
         logger.info(f"Route back: {' -> '.join(route_back_ids)} ({hops_back} hops)")
         
-        self.test_results.append({
-            'node_id': node_id,
-            'status': 'success',
-            'rtt': rtt,
-            'hops_to': hops_to,
-            'hops_back': hops_back,
-            'route': route_ids,
-            'route_back': route_back_ids,
-            'snr': packet.get('rxSnr', 0),
-            'timestamp': time.time()
-        })
-        self._check_cycle_completion(node_id)
-        self._check_cycle_completion(node_id)
-        if self.pending_traceroute == node_id:
-            self.pending_traceroute = None # Clear pending if this was the node we were waiting for
-            self.last_test_time = time.time() # Start cooldown
+        with self.lock:
+            self.test_results.append({
+                'node_id': node_id,
+                'status': 'success',
+                'rtt': rtt,
+                'hops_to': hops_to,
+                'hops_back': hops_back,
+                'route': route_ids,
+                'route_back': route_back_ids,
+                'snr': packet.get('rxSnr', 0),
+                'timestamp': time.time()
+            })
+            self._check_cycle_completion(node_id)
+            if self.pending_traceroute == node_id:
+                self.pending_traceroute = None # Clear pending if this was the node we were waiting for
+                self.last_test_time = time.time() # Start cooldown
 
     def record_timeout(self, node_id):
         """
         Records a failed test result (timeout).
         """
         logger.info(f"Recording timeout for {node_id}")
-        self.test_results.append({
-            'node_id': node_id,
-            'status': 'timeout',
-            'timestamp': time.time()
-        })
-        self._check_cycle_completion(node_id)
-        if self.pending_traceroute == node_id:
-            self.pending_traceroute = None # Clear pending if this was the node we were waiting for
-            self.last_test_time = time.time() # Start cooldown
+        with self.lock:
+            self.test_results.append({
+                'node_id': node_id,
+                'status': 'timeout',
+                'timestamp': time.time()
+            })
+            self._check_cycle_completion(node_id)
+            if self.pending_traceroute == node_id:
+                self.pending_traceroute = None # Clear pending if this was the node we were waiting for
+                self.last_test_time = time.time() # Start cooldown
 
     def _check_cycle_completion(self, node_id):
         """
         Tracks which nodes have been tested in the current cycle.
+        Must be called within a lock.
         """
         self.nodes_tested_in_cycle.add(node_id)
         
         # Check if we have tested all priority nodes
-        # Note: priority_nodes might change if auto-discovery re-runs, 
-        # but usually it's stable for a cycle.
         if self.priority_nodes:
             all_tested = all(n in self.nodes_tested_in_cycle for n in self.priority_nodes)
             logger.debug(f"Cycle Progress: {len(self.nodes_tested_in_cycle)}/{len(self.priority_nodes)} nodes tested.")

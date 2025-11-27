@@ -2,6 +2,7 @@ import logging
 import time
 import os
 from datetime import datetime
+from .utils import get_val, haversine, get_node_name
 
 from mesh_monitor.route_analyzer import RouteAnalyzer
 
@@ -168,19 +169,8 @@ class NetworkReporter:
         f.write("| Node ID | Name | Status | Distance (km) | RTT (s) | Hops (To/Back) | SNR |\n")
         f.write("|---|---|---|---|---|---|---|\n")
 
-        def get_node_name(node_id):
-            node = nodes.get(node_id)
-            if node:
-                user = node.get('user', {}) if isinstance(node, dict) else getattr(node, 'user', {})
-                # Handle nested object/dict for user
-                if hasattr(user, 'longName'): return user.longName
-                if isinstance(user, dict): return user.get('longName', node_id)
-            return node_id
-        
         def get_distance(node_id):
             """Calculate distance from local node to target node in km."""
-            import math
-            
             if not local_node:
                 return '-'
             
@@ -200,13 +190,9 @@ class NetworkReporter:
                 return '-'
             
             # Get local position from nodes dict
-            local_pos = local_node_data.get('position', {}) if isinstance(local_node_data, dict) else getattr(local_node_data, 'position', {})
-            if isinstance(local_pos, dict):
-                my_lat = local_pos.get('latitude')
-                my_lon = local_pos.get('longitude')
-            else:
-                my_lat = getattr(local_pos, 'latitude', None)
-                my_lon = getattr(local_pos, 'longitude', None)
+            local_pos = get_val(local_node_data, 'position', {})
+            my_lat = get_val(local_pos, 'latitude')
+            my_lon = get_val(local_pos, 'longitude')
             
             if my_lat is None or my_lon is None:
                 return '-'
@@ -216,32 +202,23 @@ class NetworkReporter:
             if not node:
                 return '-'
             
-            target_pos = node.get('position', {}) if isinstance(node, dict) else getattr(node, 'position', {})
-            if isinstance(target_pos, dict):
-                target_lat = target_pos.get('latitude')
-                target_lon = target_pos.get('longitude')
-            else:
-                target_lat = getattr(target_pos, 'latitude', None)
-                target_lon = getattr(target_pos, 'longitude', None)
+            target_pos = get_val(node, 'position', {})
+            target_lat = get_val(target_pos, 'latitude')
+            target_lon = get_val(target_pos, 'longitude')
             
             if target_lat is None or target_lon is None:
                 return '-'
             
             # Haversine formula
-            try:
-                lon1, lat1, lon2, lat2 = map(math.radians, [float(my_lon), float(my_lat), float(target_lon), float(target_lat)])
-                dlon = lon2 - lon1 
-                dlat = lat2 - lat1 
-                a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-                c = 2 * math.asin(math.sqrt(a)) 
-                km = c * 6371  # Earth radius in kilometers
-                return f"{km:.2f}"
-            except:
-                return '-'
+            dist_meters = haversine(my_lat, my_lon, target_lat, target_lon)
+            if dist_meters > 0:
+                return f"{dist_meters/1000:.2f}"
+            return '-'
 
         for res in test_results:
             node_id = res.get('node_id')
-            name = get_node_name(node_id)
+            node = nodes.get(node_id, {})
+            name = get_node_name(node, node_id)
             status = res.get('status', 'unknown')
             distance = get_distance(node_id)
             rtt = res.get('rtt', '-')
