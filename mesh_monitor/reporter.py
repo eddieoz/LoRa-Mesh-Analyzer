@@ -12,7 +12,7 @@ class NetworkReporter:
     def __init__(self, report_dir="."):
         self.report_dir = report_dir
 
-    def generate_report(self, nodes, test_results, analysis_issues, local_node=None):
+    def generate_report(self, nodes, test_results, analysis_issues, local_node=None, router_stats=None):
         """
         Generates a Markdown report based on collected data.
         """
@@ -37,6 +37,10 @@ class NetworkReporter:
 
                 # 2. Network Health (Analysis Findings)
                 self._write_network_health(f, analysis_issues)
+                
+                # 2.1 Router Performance Table (New)
+                if router_stats:
+                    self._write_router_performance_table(f, router_stats)
 
                 # 3. Route Analysis (New Section)
                 self._write_route_analysis(f, route_analysis)
@@ -137,6 +141,8 @@ class NetworkReporter:
                 config.append(issue)
             elif "Topology" in issue or "Density" in issue or "hops away" in issue:
                 topology.append(issue)
+            elif "Efficiency" in issue or "Route Quality" in issue:
+                pass # Handled in separate sections
             else:
                 other.append(issue)
 
@@ -166,11 +172,34 @@ class NetworkReporter:
             f.write("### Router Efficiency Analysis\n")
             f.write("Analysis of router placement, congestion, and relay performance.\n\n")
             for i in efficiency:
-                # Format: Efficiency: Router 'Name' is Issue. Details.
-                # Let's make it a bit cleaner
                 clean_msg = i.replace("Efficiency: ", "")
                 f.write(f"- {clean_msg}\n")
             f.write("\n")
+
+        # Separate section for Route Quality
+        quality = [i for i in analysis_issues if "Route Quality" in i]
+        if quality:
+            f.write("### Route Quality Analysis\n")
+            f.write("Analysis of path efficiency and stability.\n\n")
+            for i in quality:
+                clean_msg = i.replace("Route Quality: ", "")
+                f.write(f"- {clean_msg}\n")
+            f.write("\n")
+
+    def _write_router_performance_table(self, f, router_stats):
+        f.write("### Router Performance Table\n")
+        if not router_stats:
+            f.write("No routers found.\n\n")
+            return
+
+        f.write("| Name | Role | Neighbors (2km) | Routers (2km) | ChUtil | Relayed | Status |\n")
+        f.write("|---|---|---|---|---|---|---|\n")
+        
+        for s in router_stats:
+            f.write(f"| {s['name']} | {s['role']} | {s['neighbors_2km']} | {s['routers_2km']} | {s['ch_util']:.1f}% | {s['relay_count']} | {s['status']} |\n")
+        f.write("\n")
+
+
 
     def _write_traceroute_results(self, f, test_results, nodes, local_node=None):
         f.write("## 3. Traceroute Results\n")

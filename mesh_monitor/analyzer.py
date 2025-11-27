@@ -79,12 +79,12 @@ class NetworkHealthAnalyzer:
 
         return issues
 
-    def check_router_efficiency(self, nodes, test_results=None):
+    def get_router_stats(self, nodes, test_results=None):
         """
-        Analyzes router placement and efficiency.
-        Returns a list of issue strings.
+        Calculates detailed statistics for each router.
+        Returns a list of dictionaries.
         """
-        issues = []
+        stats = []
         routers = []
         
         # 1. Identify Routers
@@ -94,9 +94,10 @@ class NetworkHealthAnalyzer:
             
             is_router = False
             if isinstance(role, int):
-                if role in [2, 3]: # ROUTER, ROUTER_CLIENT (REPEATER is 4, usually dumb)
+                # 2=ROUTER_CLIENT, 3=ROUTER, 4=REPEATER, 5=TRACKER, 6=SENSOR, 7=TAK, 8=CLIENT_MUTE, 9=ROUTER_LATE
+                if role in [2, 3, 9]: 
                     is_router = True
-            elif role in ['ROUTER', 'ROUTER_CLIENT']:
+            elif role in ['ROUTER', 'ROUTER_CLIENT', 'ROUTER_LATE']:
                 is_router = True
             
             if is_router:
@@ -108,6 +109,7 @@ class NetworkHealthAnalyzer:
                     routers.append({
                         'id': node_id,
                         'name': get_node_name(node, node_id),
+                        'role': 'ROUTER' if role in [3, 'ROUTER'] else ('ROUTER_LATE' if role in [9, 'ROUTER_LATE'] else 'ROUTER_CLIENT'),
                         'lat': lat,
                         'lon': lon,
                         'metrics': get_val(node, 'deviceMetrics', {})
@@ -115,54 +117,78 @@ class NetworkHealthAnalyzer:
 
         # 2. Analyze Each Router
         for r in routers:
-            # A. Check Density (Redundancy)
+            # A. Neighbors (2km)
             nearby_routers = 0
-            for other in routers:
-                if r['id'] == other['id']: continue
-                dist = haversine(r['lat'], r['lon'], other['lat'], other['lon'])
-                if dist < 2000: # 2km radius
-                    nearby_routers += 1
+            total_neighbors = 0
             
-            if nearby_routers >= 2:
-                issues.append(f"Efficiency: Router '{r['name']}' is Redundant. Has {nearby_routers} other routers within 2km. Consolidate?")
+            for node_id, node in nodes.items():
+                if node_id == r['id']: continue
+                pos = get_val(node, 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                
+                if lat and lon:
+                    dist = haversine(r['lat'], r['lon'], lat, lon)
+                    if dist < 2000:
+                        total_neighbors += 1
+                        # Check if it's also a router
+                        # (Simplified check, ideally we'd check against the routers list but this is O(N))
+                        user = get_val(node, 'user', {})
+                        role = get_val(user, 'role')
+                        if role in [2, 3, 'ROUTER', 'ROUTER_CLIENT']:
+                            nearby_routers += 1
 
-            # B. Check Congestion
-            ch_util = get_val(r['metrics'], 'channelUtilization', 0)
-            if ch_util > 20:
-                issues.append(f"Efficiency: Router '{r['name']}' is Congested (ChUtil {ch_util:.1f}% > 20%).")
-
-            # C. Check Relay Efficiency (if we have test results)
+            # B. Relay Count
+            relay_count = 0
             if test_results:
-                # Count how many times this router was used as a relay
-                relay_count = 0
                 for res in test_results:
                     route = res.get('route', [])
-                    # route is list of IDs (int or hex string? usually int in packet, but we need to match)
-                    # Let's normalize to check
-                    r_id_num = r['id'].replace('!', '')
-                    try:
-                        r_id_int = int(r_id_num, 16)
-                    except:
-                        r_id_int = 0
-                        
-                    if r_id_int in route:
+                    # Normalize route IDs to hex strings for comparison
+                    route_hex = [f"!{n:08x}" if isinstance(n, int) else n for n in route]
+                    
+                    if r['id'] in route_hex:
                         relay_count += 1
-                        
-                # Check for "Ineffective" (High Density of Neighbors but Low Relay Count)
-                # Count ALL neighbors (clients + routers)
-                total_neighbors = 0
-                for node_id, node in nodes.items():
-                    if node_id == r['id']: continue
-                    pos = get_val(node, 'position', {})
-                    lat = get_val(pos, 'latitude')
-                    lon = get_val(pos, 'longitude')
-                    if lat and lon:
-                        dist = haversine(r['lat'], r['lon'], lat, lon)
-                        if dist < 2000:
-                            total_neighbors += 1
-                
-                if total_neighbors > 5 and relay_count == 0:
-                     issues.append(f"Efficiency: Router '{r['name']}' is Ineffective. Has {total_neighbors} neighbors but relayed 0 packets in tests.")
+            
+            # C. Channel Util
+            ch_util = get_val(r['metrics'], 'channelUtilization', 0)
+            
+            # D. Status / Issues
+            status_issues = []
+            if nearby_routers >= 2:
+                status_issues.append("Redundant")
+            if ch_util > 20:
+                status_issues.append("Congested")
+            if total_neighbors > 5 and relay_count == 0:
+                status_issues.append("Ineffective")
+            
+            stats.append({
+                'id': r['id'],
+                'name': r['name'],
+                'role': r['role'],
+                'neighbors_2km': total_neighbors,
+                'routers_2km': nearby_routers,
+                'ch_util': ch_util,
+                'relay_count': relay_count,
+                'status': ", ".join(status_issues) if status_issues else "OK"
+            })
+            
+        return stats
+
+    def check_router_efficiency(self, nodes, test_results=None):
+        """
+        Analyzes router placement and efficiency.
+        Returns a list of issue strings.
+        """
+        issues = []
+        stats = self.get_router_stats(nodes, test_results)
+        
+        for s in stats:
+            if "Redundant" in s['status']:
+                issues.append(f"Efficiency: Router '{s['name']}' is Redundant. Has {s['routers_2km']} other routers within 2km. Consolidate?")
+            if "Congested" in s['status']:
+                issues.append(f"Efficiency: Router '{s['name']}' is Congested (ChUtil {s['ch_util']:.1f}% > 20%).")
+            if "Ineffective" in s['status']:
+                issues.append(f"Efficiency: Router '{s['name']}' is Ineffective. Has {s['neighbors_2km']} neighbors but relayed 0 packets in tests.")
 
         return issues
 

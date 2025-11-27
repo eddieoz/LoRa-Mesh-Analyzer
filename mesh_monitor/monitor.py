@@ -286,6 +286,27 @@ class MeshMonitor:
         # logger.debug(f"Node info updated: {node}")
         pass
 
+    def apply_manual_positions(self, nodes):
+        """
+        Applies manual positions from config to nodes.
+        """
+        manual_positions = self.config.get('manual_positions', {})
+        if not manual_positions:
+            return
+
+        for node_id, pos in manual_positions.items():
+            if node_id in nodes:
+                node = nodes[node_id]
+                # Ensure position dict exists
+                if 'position' not in node:
+                    node['position'] = {}
+                
+                # Update position
+                if 'lat' in pos and 'lon' in pos:
+                    node['position']['latitude'] = pos['lat']
+                    node['position']['longitude'] = pos['lon']
+                    logger.debug(f"Applied manual position to {node_id}: {pos}")
+
     def main_loop(self):
         logger.info("Starting monitoring loop...")
         while self.running:
@@ -299,6 +320,9 @@ class MeshMonitor:
                     logger.debug("--- Running Network Analysis ---")
                     nodes = self.interface.nodes
                     
+                    # Apply Manual Positions
+                    self.apply_manual_positions(nodes)
+                    
                     # Get local node info for distance calculations
                     my_node = None
                     if hasattr(self.interface, 'localNode'):
@@ -310,6 +334,7 @@ class MeshMonitor:
                     # Run Router Efficiency Analysis (using accumulated test results if available)
                     if self.active_tester:
                         issues.extend(self.analyzer.check_router_efficiency(nodes, test_results=self.active_tester.test_results))
+                        issues.extend(self.analyzer.check_route_quality(nodes, test_results=self.active_tester.test_results))
                     else:
                         issues.extend(self.analyzer.check_router_efficiency(nodes))
                     
@@ -334,7 +359,10 @@ class MeshMonitor:
                         if hasattr(self.interface, 'localNode'):
                             local_node = self.interface.localNode
                         
-                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [], local_node=local_node)
+                        # Calculate Router Stats for Report
+                        router_stats = self.analyzer.get_router_stats(nodes, self.active_tester.test_results)
+
+                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [], local_node=local_node, router_stats=router_stats)
                         
                         # Reset cycle count and results
                         self.active_tester.completed_cycles = 0
@@ -354,6 +382,19 @@ class MeshMonitor:
             # ... exceptions ...
             except KeyboardInterrupt:
                 logger.info("Stopping monitor...")
+                # Generate partial report if we have nodes (even if no test results yet)
+                if nodes:
+                    logger.info("Generating partial report before exit...")
+                    local_node = None
+                    if hasattr(self.interface, 'localNode'):
+                        local_node = self.interface.localNode
+                    
+                    # Use whatever results we have (could be empty)
+                    results = self.active_tester.test_results if self.active_tester else []
+                    
+                    router_stats = self.analyzer.get_router_stats(nodes, results)
+                    self.reporter.generate_report(nodes, results, issues if 'issues' in locals() else [], local_node=local_node, router_stats=router_stats)
+                
                 self.stop()
                 break
             except Exception as e:

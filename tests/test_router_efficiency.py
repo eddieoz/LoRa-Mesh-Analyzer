@@ -99,5 +99,40 @@ class TestRouterEfficiency(unittest.TestCase):
         print("\nEffective Issues (Should be empty):", issues)
         self.assertFalse(any("GoodRouter" in i for i in issues))
 
+    def test_get_router_stats(self):
+        nodes = {
+            '!77777777': {
+                'user': {'id': '!77777777', 'longName': 'StatsRouter', 'role': 'ROUTER'},
+                'position': {'latitude': 44.0, 'longitude': -78.0},
+                'deviceMetrics': {'channelUtilization': 25}
+            }
+        }
+        # Add 3 router neighbors
+        for i in range(3):
+            nodes[f'!r_neighbor{i}'] = {
+                'user': {'id': f'!r_neighbor{i}', 'role': 'ROUTER'},
+                'position': {'latitude': 44.001, 'longitude': -78.001}
+            }
+        
+        """Test that get_router_stats returns correct structure and calculations."""
+        # Create a mock route where StatsRouter (!77777777) is used as a relay
+        # 0x77777777 = 2004318071
+        test_results = [
+            {'route': [2004318071], 'status': 'success'} 
+        ]
+        
+        stats = self.analyzer.get_router_stats(nodes, test_results)
+        print("\nRouter Stats:", stats)
+        
+        self.assertEqual(len(stats), 4) # StatsRouter + 3 neighbors
+        
+        target = next(s for s in stats if s['id'] == '!77777777')
+        self.assertEqual(target['neighbors_2km'], 3)
+        self.assertEqual(target['routers_2km'], 3)
+        self.assertEqual(target['ch_util'], 25.0)
+        self.assertEqual(target['relay_count'], 1) # Should be 1 now
+        self.assertIn('Redundant', target['status'])
+        self.assertIn('Congested', target['status'])
+
 if __name__ == '__main__':
     unittest.main()
