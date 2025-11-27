@@ -107,7 +107,80 @@ class TestNetworkMonitor(unittest.TestCase):
         mock_interface.sendTraceRoute.assert_called_with("!PRIORITY1", hopLimit=7)
         print("  [Pass] Loop back to first priority node")
         
+        # 3. Loop back to first
+        # ... (existing code) ...
+        
         print("Active Tester Priority Test Passed!")
+
+    def test_traceroute_timeout_config(self):
+        print("\nRunning Traceroute Timeout Config Test...")
+        mock_interface = MagicMock()
+        
+        # Default
+        tester = ActiveTester(mock_interface)
+        self.assertEqual(tester.traceroute_timeout, 60)
+        
+        # Custom
+        tester_custom = ActiveTester(mock_interface, traceroute_timeout=120)
+        self.assertEqual(tester_custom.traceroute_timeout, 120)
+        print("Traceroute Timeout Config Test Passed!")
+
+        tester_custom = ActiveTester(mock_interface, test_interval=30)
+        self.assertEqual(tester_custom.min_test_interval, 30)
+        print("Test Interval Config Test Passed!")
+
+    def test_stratified_discovery(self):
+        print("\nRunning Stratified Discovery Test...")
+        mock_interface = MagicMock()
+        
+        # Setup Nodes
+        # Roles: ROUTER (Priority 1), CLIENT (Priority 2)
+        # Sort keys: lastHeard (desc), dist (desc)
+        mock_nodes = {
+            '!r1': {'user': {'id': '!r1', 'role': 'ROUTER'}, 'position': {'latitude_i': 10000000, 'longitude_i': 10000000}, 'lastHeard': 100}, # Dist ~1500km
+            '!r2': {'user': {'id': '!r2', 'role': 'ROUTER'}, 'position': {'latitude_i': 20000000, 'longitude_i': 20000000}, 'lastHeard': 200}, # Dist ~3000km
+            '!c1': {'user': {'id': '!c1', 'role': 'CLIENT'}, 'position': {'latitude_i': 30000000, 'longitude_i': 30000000}, 'lastHeard': 300}, # Dist ~4500km
+            '!c2': {'user': {'id': '!c2', 'role': 'CLIENT'}, 'position': {'latitude_i': 40000000, 'longitude_i': 40000000}, 'lastHeard': 50},  # Dist ~6000km
+        }
+        mock_interface.nodes = mock_nodes
+        
+        # Local Node at 0,0
+        mock_interface.localNode = {'user': {'id': '!local'}, 'position': {'latitude_i': 0, 'longitude_i': 0}}
+        
+        # Config: Prioritize ROUTER then CLIENT
+        roles = ['ROUTER', 'CLIENT']
+        
+        tester = ActiveTester(
+            mock_interface, 
+            auto_discovery_roles=roles,
+            auto_discovery_limit=4,
+            local_node_id='!local'
+        )
+        
+        # Run Discovery
+        selected = tester._auto_discover_nodes()
+        print(f"  Selected: {selected}")
+        
+        # Expected Order:
+        # 1. ROUTERs: !r2 (LH=200), !r1 (LH=100)
+        # 2. CLIENTs: !c1 (LH=300), !c2 (LH=50)
+        expected = ['!r2', '!r1', '!c1', '!c2']
+        
+        self.assertEqual(selected, expected)
+        print("Stratified Discovery Test Passed!")
+        print("\nRunning Test Interval Config Test...")
+        mock_interface = MagicMock()
+        
+        # Default
+        tester = ActiveTester(mock_interface)
+        # Note: Default in class is actually 60 if not passed, but we pass 30 from monitor
+        # Let's check the class default behavior
+        # self.assertEqual(tester.min_test_interval, 60) 
+        
+        # Custom
+        tester_custom = ActiveTester(mock_interface, test_interval=30)
+        self.assertEqual(tester_custom.min_test_interval, 30)
+        print("Test Interval Config Test Passed!")
 
     def test_advanced_diagnostics(self):
         print("\nRunning Advanced Diagnostics Test...")

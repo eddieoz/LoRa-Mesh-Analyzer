@@ -87,6 +87,12 @@ priority_nodes:
 
 # Generate report after N full testing cycles
 report_cycles: 1
+
+# Timeout for traceroute response (in seconds)
+traceroute_timeout: 90
+
+# Minimum interval between tests (in seconds)
+active_test_interval: 30
 ```
 
 The monitor will cycle through these nodes and send traceroute requests to them.

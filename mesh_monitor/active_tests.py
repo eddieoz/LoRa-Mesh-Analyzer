@@ -5,7 +5,7 @@ import meshtastic.util
 logger = logging.getLogger(__name__)
 
 class ActiveTester:
-    def __init__(self, interface, priority_nodes=None, auto_discovery_roles=None, auto_discovery_limit=5, online_nodes=None, local_node_id=None):
+    def __init__(self, interface, priority_nodes=None, auto_discovery_roles=None, auto_discovery_limit=5, online_nodes=None, local_node_id=None, traceroute_timeout=60, test_interval=30):
         self.interface = interface
         self.priority_nodes = priority_nodes if priority_nodes else []
         self.auto_discovery_roles = auto_discovery_roles if auto_discovery_roles else ['ROUTER', 'REPEATER']
@@ -13,10 +13,10 @@ class ActiveTester:
         self.online_nodes = online_nodes if online_nodes else set()
         self.local_node_id = local_node_id
         self.last_test_time = 0
-        self.min_test_interval = 60 # Seconds between active tests
+        self.min_test_interval = test_interval # Seconds between active tests
         self.current_priority_index = 0
         self.pending_traceroute = None # Store ID of node we are waiting for
-        self.traceroute_timeout = 60 # Seconds to wait for a response
+        self.traceroute_timeout = traceroute_timeout # Seconds to wait for a response
         
         # Reporting Data
         self.test_results = [] # List of dicts: {node_id, status, rtt, hops, snr, timestamp}
@@ -110,7 +110,11 @@ class ActiveTester:
         else:
             logger.warning("No localNode attribute on interface")
 
-        # Filter nodes by lastHeard, role, and calculate distance
+        # Group candidates by role
+        from collections import defaultdict
+        nodes_by_role = defaultdict(list)
+
+        # Filter nodes and calculate distance
         for node_id, node in nodes.items():
             # Skip self
             my_id = self.local_node_id
@@ -137,7 +141,7 @@ class ActiveTester:
                 logger.debug(f"Skipping {node_id}: No lastHeard data")
                 continue
 
-            # Filter by Role
+            # Get Role
             user = get_val(node, 'user', {})
             role = get_val(user, 'role', 'CLIENT')
             
@@ -148,10 +152,6 @@ class ActiveTester:
                     role = config_pb2.Config.DeviceConfig.Role.Name(role)
                 except:
                     pass # Keep as int or whatever
-            
-            if role not in self.auto_discovery_roles:
-                logger.debug(f"Skipping {node_id}: Role {role} not in {self.auto_discovery_roles}")
-                continue
             
             # Calculate distance if possible
             dist = 0
@@ -175,31 +175,54 @@ class ActiveTester:
             if my_lat is not None and my_lon is not None and lat is not None and lon is not None:
                 dist = self._haversine(my_lat, my_lon, lat, lon)
             
-            candidates.append({
+            # Add to bucket
+            nodes_by_role[role].append({
                 'id': node_id,
                 'dist': dist,
                 'lastHeard': last_heard,
                 'role': role
             })
 
-        if not candidates:
-            logger.warning("No candidate nodes found matching criteria (role, lastHeard)")
+        # Select nodes based on role priority
+        final_candidates = []
+        limit = self.auto_discovery_limit
+        
+        logger.info(f"Selecting up to {limit} nodes based on role priority: {self.auto_discovery_roles}")
+
+        for role_priority in self.auto_discovery_roles:
+            if len(final_candidates) >= limit:
+                break
+                
+            candidates_for_role = nodes_by_role.get(role_priority, [])
+            if not candidates_for_role:
+                continue
+                
+            # Sort by lastHeard (Descending - Most Recent) then Distance (Descending - Furthest)
+            # Tuple sort: (lastHeard desc, dist desc)
+            # To sort desc, we can use reverse=True. 
+            # But if we want different directions?
+            # User said: "sort by last_heard, then by distance"
+            # Assuming both descending (most recent, furthest).
+            candidates_for_role.sort(key=lambda x: (x['lastHeard'], x['dist']), reverse=True)
+            
+            # Add to final list
+            remaining_slots = limit - len(final_candidates)
+            to_add = candidates_for_role[:remaining_slots]
+            final_candidates.extend(to_add)
+            
+            logger.info(f"  Added {len(to_add)} nodes with role {role_priority}")
+
+        if not final_candidates:
+            logger.warning("No candidate nodes found matching criteria.")
             return []
 
-        # Sort by distance (Descending - Furthest First)
-        candidates.sort(key=lambda x: x['dist'], reverse=True)
-        
-        # Select Top N (Furthest)
-        limit = self.auto_discovery_limit
-        selected = candidates[:limit]
-        
-        # Log the selection with distances and lastHeard
-        logger.info(f"Auto-discovered {len(selected)} targets from node database:")
-        for c in selected:
+        # Log the selection
+        logger.info(f"Auto-discovered {len(final_candidates)} targets:")
+        for c in final_candidates:
             logger.info(f"  - {c['id']} ({c['dist']/1000:.2f}km, role={c['role']}, lastHeard={c['lastHeard']})")
         
         # Return just the IDs
-        selected_ids = [c['id'] for c in selected]
+        selected_ids = [c['id'] for c in final_candidates]
         return selected_ids
 
     def _haversine(self, lat1, lon1, lat2, lon2):

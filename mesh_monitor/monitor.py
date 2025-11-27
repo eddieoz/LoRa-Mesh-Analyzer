@@ -109,13 +109,17 @@ class MeshMonitor:
                     logger.warning(f"Could not retrieve local node ID: {e}")
 
                 # Create ActiveTester with auto-discovery (no online_nodes needed)
+                traceroute_timeout = self.config.get('traceroute_timeout', 60)
+                test_interval = self.config.get('active_test_interval', 30)
                 self.active_tester = ActiveTester(
                     self.interface, 
                     priority_nodes=[],  # Empty - will trigger auto-discovery
                     auto_discovery_roles=auto_discovery_roles,
                     auto_discovery_limit=auto_discovery_limit,
                     online_nodes=set(),  # Not used anymore - discovery uses lastHeard
-                    local_node_id=local_id
+                    local_node_id=local_id,
+                    traceroute_timeout=traceroute_timeout,
+                    test_interval=test_interval
                 )
                 
                 logger.info("Active testing started with auto-discovered nodes.")
@@ -145,12 +149,16 @@ class MeshMonitor:
                  except Exception as e:
                      logger.warning(f"Could not retrieve local node ID: {e}")
 
+                 traceroute_timeout = self.config.get('traceroute_timeout', 60)
+                 test_interval = self.config.get('active_test_interval', 30)
                  self.active_tester = ActiveTester(
                     self.interface, 
                     priority_nodes=priority_nodes,
                     auto_discovery_roles=auto_discovery_roles,
                     auto_discovery_limit=auto_discovery_limit,
-                    local_node_id=local_id
+                    local_node_id=local_id,
+                    traceroute_timeout=traceroute_timeout,
+                    test_interval=test_interval
                 )
 
             self.main_loop()

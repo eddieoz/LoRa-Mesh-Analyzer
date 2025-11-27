@@ -23,3 +23,10 @@ auto_discovery_limit: 5
 # Reporting Settings
 # Generate report after N full testing cycles
 report_cycles: 1
+
+# Active Testing Settings
+# Timeout for traceroute response (in seconds)
+traceroute_timeout: 90
+
+# Minimum interval between tests (in seconds)
+active_test_interval: 30
