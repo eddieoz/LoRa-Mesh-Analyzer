@@ -307,6 +307,12 @@ class MeshMonitor:
                     # Run Analysis
                     issues = self.analyzer.analyze(nodes, packet_history=self.packet_history, my_node=my_node)
                     
+                    # Run Router Efficiency Analysis (using accumulated test results if available)
+                    if self.active_tester:
+                        issues.extend(self.analyzer.check_router_efficiency(nodes, test_results=self.active_tester.test_results))
+                    else:
+                        issues.extend(self.analyzer.check_router_efficiency(nodes))
+                    
                     # Report Issues
                     if issues:
                         logger.warning(f"Found {len(issues)} potential issues:")

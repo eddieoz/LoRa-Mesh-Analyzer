@@ -1,0 +1,103 @@
+import unittest
+from mesh_monitor.analyzer import NetworkHealthAnalyzer
+
+class TestRouterEfficiency(unittest.TestCase):
+    def setUp(self):
+        self.analyzer = NetworkHealthAnalyzer()
+
+    def test_redundant_routers(self):
+        # Create 3 routers very close to each other
+        nodes = {
+            '!11111111': {
+                'user': {'id': '!11111111', 'longName': 'Router1', 'role': 'ROUTER'},
+                'position': {'latitude': 40.0, 'longitude': -74.0},
+                'deviceMetrics': {'channelUtilization': 10}
+            },
+            '!22222222': {
+                'user': {'id': '!22222222', 'longName': 'Router2', 'role': 'ROUTER'},
+                'position': {'latitude': 40.001, 'longitude': -74.001}, # Very close
+                'deviceMetrics': {'channelUtilization': 10}
+            },
+            '!33333333': {
+                'user': {'id': '!33333333', 'longName': 'Router3', 'role': 'ROUTER'},
+                'position': {'latitude': 40.002, 'longitude': -74.002}, # Very close
+                'deviceMetrics': {'channelUtilization': 10}
+            }
+        }
+        
+        issues = self.analyzer.check_router_efficiency(nodes)
+        print("\nRedundancy Issues:", issues)
+        
+        # All 3 should be flagged as redundant (each has 2 neighbors)
+        self.assertTrue(any("Router1" in i and "Redundant" in i for i in issues))
+        self.assertTrue(any("Router2" in i and "Redundant" in i for i in issues))
+        self.assertTrue(any("Router3" in i and "Redundant" in i for i in issues))
+
+    def test_congested_router(self):
+        nodes = {
+            '!44444444': {
+                'user': {'id': '!44444444', 'longName': 'BusyRouter', 'role': 'ROUTER'},
+                'position': {'latitude': 41.0, 'longitude': -75.0},
+                'deviceMetrics': {'channelUtilization': 50} # High Util
+            }
+        }
+        
+        issues = self.analyzer.check_router_efficiency(nodes)
+        print("\nCongestion Issues:", issues)
+        self.assertTrue(any("BusyRouter" in i and "Congested" in i for i in issues))
+
+    def test_ineffective_router(self):
+        # Router surrounded by many nodes but not relaying
+        nodes = {
+            '!55555555': {
+                'user': {'id': '!55555555', 'longName': 'LazyRouter', 'role': 'ROUTER'},
+                'position': {'latitude': 42.0, 'longitude': -76.0},
+                'deviceMetrics': {'channelUtilization': 5}
+            }
+        }
+        
+        # Add 6 neighbors
+        for i in range(6):
+            nodes[f'!neighbor{i}'] = {
+                'user': {'id': f'!neighbor{i}', 'role': 'CLIENT'},
+                'position': {'latitude': 42.001, 'longitude': -76.001}
+            }
+            
+        # Test results showing NO relaying by LazyRouter
+        test_results = [
+            {'node_id': '!neighbor0', 'route': [12345, 67890]} # Random IDs, not LazyRouter
+        ]
+        
+        issues = self.analyzer.check_router_efficiency(nodes, test_results)
+        print("\nIneffective Issues:", issues)
+        self.assertTrue(any("LazyRouter" in i and "Ineffective" in i for i in issues))
+
+    def test_effective_router(self):
+        # Router surrounded by nodes AND relaying
+        nodes = {
+            '!66666666': {
+                'user': {'id': '!66666666', 'longName': 'GoodRouter', 'role': 'ROUTER'},
+                'position': {'latitude': 43.0, 'longitude': -77.0},
+                'deviceMetrics': {'channelUtilization': 5}
+            }
+        }
+        
+        # Add 6 neighbors
+        for i in range(6):
+            nodes[f'!neighbor{i}'] = {
+                'user': {'id': f'!neighbor{i}', 'role': 'CLIENT'},
+                'position': {'latitude': 43.001, 'longitude': -77.001}
+            }
+            
+        # Test results showing relaying by GoodRouter (ID !66666666 -> 0x66666666)
+        # 0x66666666 = 1717986918
+        test_results = [
+            {'node_id': '!neighbor0', 'route': [1717986918]} 
+        ]
+        
+        issues = self.analyzer.check_router_efficiency(nodes, test_results)
+        print("\nEffective Issues (Should be empty):", issues)
+        self.assertFalse(any("GoodRouter" in i for i in issues))
+
+if __name__ == '__main__':
+    unittest.main()

@@ -79,6 +79,135 @@ class NetworkHealthAnalyzer:
 
         return issues
 
+    def check_router_efficiency(self, nodes, test_results=None):
+        """
+        Analyzes router placement and efficiency.
+        Returns a list of issue strings.
+        """
+        issues = []
+        routers = []
+        
+        # 1. Identify Routers
+        for node_id, node in nodes.items():
+            user = get_val(node, 'user', {})
+            role = get_val(user, 'role')
+            
+            is_router = False
+            if isinstance(role, int):
+                if role in [2, 3]: # ROUTER, ROUTER_CLIENT (REPEATER is 4, usually dumb)
+                    is_router = True
+            elif role in ['ROUTER', 'ROUTER_CLIENT']:
+                is_router = True
+            
+            if is_router:
+                pos = get_val(node, 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                
+                if lat is not None and lon is not None:
+                    routers.append({
+                        'id': node_id,
+                        'name': get_node_name(node, node_id),
+                        'lat': lat,
+                        'lon': lon,
+                        'metrics': get_val(node, 'deviceMetrics', {})
+                    })
+
+        # 2. Analyze Each Router
+        for r in routers:
+            # A. Check Density (Redundancy)
+            nearby_routers = 0
+            for other in routers:
+                if r['id'] == other['id']: continue
+                dist = haversine(r['lat'], r['lon'], other['lat'], other['lon'])
+                if dist < 2000: # 2km radius
+                    nearby_routers += 1
+            
+            if nearby_routers >= 2:
+                issues.append(f"Efficiency: Router '{r['name']}' is Redundant. Has {nearby_routers} other routers within 2km. Consolidate?")
+
+            # B. Check Congestion
+            ch_util = get_val(r['metrics'], 'channelUtilization', 0)
+            if ch_util > 20:
+                issues.append(f"Efficiency: Router '{r['name']}' is Congested (ChUtil {ch_util:.1f}% > 20%).")
+
+            # C. Check Relay Efficiency (if we have test results)
+            if test_results:
+                # Count how many times this router was used as a relay
+                relay_count = 0
+                for res in test_results:
+                    route = res.get('route', [])
+                    # route is list of IDs (int or hex string? usually int in packet, but we need to match)
+                    # Let's normalize to check
+                    r_id_num = r['id'].replace('!', '')
+                    try:
+                        r_id_int = int(r_id_num, 16)
+                    except:
+                        r_id_int = 0
+                        
+                    if r_id_int in route:
+                        relay_count += 1
+                        
+                # Check for "Ineffective" (High Density of Neighbors but Low Relay Count)
+                # Count ALL neighbors (clients + routers)
+                total_neighbors = 0
+                for node_id, node in nodes.items():
+                    if node_id == r['id']: continue
+                    pos = get_val(node, 'position', {})
+                    lat = get_val(pos, 'latitude')
+                    lon = get_val(pos, 'longitude')
+                    if lat and lon:
+                        dist = haversine(r['lat'], r['lon'], lat, lon)
+                        if dist < 2000:
+                            total_neighbors += 1
+                
+                if total_neighbors > 5 and relay_count == 0:
+                     issues.append(f"Efficiency: Router '{r['name']}' is Ineffective. Has {total_neighbors} neighbors but relayed 0 packets in tests.")
+
+        return issues
+
+    def check_route_quality(self, nodes, test_results):
+        """
+        Analyzes the quality of routes found in traceroute tests.
+        Checks for Hop Efficiency and Favorite Router usage.
+        """
+        issues = []
+        
+        if not test_results:
+            return issues
+
+        for res in test_results:
+            node_id = res.get('node_id')
+            node = nodes.get(node_id, {})
+            node_name = get_node_name(node, node_id)
+            
+            # 1. Hop Efficiency
+            hops_to = res.get('hops_to')
+            if isinstance(hops_to, int):
+                if hops_to > 3:
+                     issues.append(f"Route Quality: Long path to '{node_name}' ({hops_to} hops). Latency risk.")
+
+            # 2. Favorite Router Usage
+            route = res.get('route', [])
+            used_favorite = False
+            for hop_id in route:
+                # Normalize ID
+                hop_hex = f"!{hop_id:08x}" if isinstance(hop_id, int) else hop_id
+                hop_node = nodes.get(hop_hex)
+                if hop_node:
+                    is_fav = get_val(hop_node, 'is_favorite', False)
+                    if is_fav:
+                        used_favorite = True
+                        fav_name = get_node_name(hop_node, hop_hex)
+                        issues.append(f"Route Quality: Route to '{node_name}' uses Favorite Router '{fav_name}'. Range Extended.")
+            
+            # 3. SNR Check
+            snr = res.get('snr')
+            if snr is not None and snr < -10:
+                 issues.append(f"Route Quality: Weak signal to '{node_name}' (SNR {snr}dB). Link unstable.")
+
+        return list(set(issues))
+
     def check_duplication(self, history, nodes):
         """
         Detects if the same message ID is being received multiple times.

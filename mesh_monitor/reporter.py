@@ -160,6 +160,18 @@ class NetworkReporter:
             for i in other: f.write(f"- {i}\n")
             f.write("\n")
 
+        # Separate section for Efficiency
+        efficiency = [i for i in analysis_issues if "Efficiency" in i]
+        if efficiency:
+            f.write("### Router Efficiency Analysis\n")
+            f.write("Analysis of router placement, congestion, and relay performance.\n\n")
+            for i in efficiency:
+                # Format: Efficiency: Router 'Name' is Issue. Details.
+                # Let's make it a bit cleaner
+                clean_msg = i.replace("Efficiency: ", "")
+                f.write(f"- {clean_msg}\n")
+            f.write("\n")
+
     def _write_traceroute_results(self, f, test_results, nodes, local_node=None):
         f.write("## 3. Traceroute Results\n")
         if not test_results:
