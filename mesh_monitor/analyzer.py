@@ -202,11 +202,11 @@ class NetworkHealthAnalyzer:
         
         for s in stats:
             if "Redundant" in s['status']:
-                issues.append(f"Efficiency: Router '{s['name']}' is Redundant. Has {s['routers_2km']} other routers within 2km. Consolidate?")
+                issues.append(f"Efficiency: Router '{s['name']}' is Redundant. Has {s['routers_nearby']} other routers within {s['radius']/1000:.1f}km. Consolidate?")
             if "Congested" in s['status']:
                 issues.append(f"Efficiency: Router '{s['name']}' is Congested (ChUtil {s['ch_util']:.1f}% > 20%).")
             if "Ineffective" in s['status']:
-                issues.append(f"Efficiency: Router '{s['name']}' is Ineffective. Has {s['neighbors_2km']} neighbors but relayed 0 packets in tests.")
+                issues.append(f"Efficiency: Router '{s['name']}' is Ineffective. Has {s['neighbors']} neighbors but relayed 0 packets in tests.")
 
         return issues
 
@@ -413,9 +413,9 @@ class NetworkHealthAnalyzer:
         
         # 3. Analyze Clusters and Generate Recommendations
         for cluster in clusters:
-            # Sort by relay_count (desc), then neighbors_2km (desc)
+            # Sort by relay_count (desc), then neighbors (desc)
             # We want the "best" router first
-            cluster.sort(key=lambda x: (x['relay_count'], x['neighbors_2km']), reverse=True)
+            cluster.sort(key=lambda x: (x['relay_count'], x['neighbors']), reverse=True)
             
             best_router = cluster[0]
             others = cluster[1:]

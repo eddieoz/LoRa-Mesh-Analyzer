@@ -1,6 +1,7 @@
 import logging
 import time
 import os
+import json
 from datetime import datetime
 from .utils import get_val, haversine, get_node_name
 
@@ -9,16 +10,23 @@ from mesh_monitor.route_analyzer import RouteAnalyzer
 logger = logging.getLogger(__name__)
 
 class NetworkReporter:
-    def __init__(self, report_dir="."):
+    def __init__(self, report_dir="reports", config=None):
         self.report_dir = report_dir
+        self.config = config or {}
+        
+        # Ensure report directory exists
+        os.makedirs(self.report_dir, exist_ok=True)
 
     def generate_report(self, nodes, test_results, analysis_issues, local_node=None, router_stats=None):
         """
         Generates a Markdown report based on collected data.
+        Also persists all raw data to JSON format.
         """
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         filename = f"report-{timestamp}.md"
+        json_filename = f"report-{timestamp}.json"
         filepath = os.path.join(self.report_dir, filename)
+        json_filepath = os.path.join(self.report_dir, json_filename)
 
         logger.info(f"Generating network report: {filepath}")
 
@@ -27,6 +35,7 @@ class NetworkReporter:
         route_analysis = route_analyzer.analyze_routes(test_results)
 
         try:
+            # --- Generate Markdown Report ---
             with open(filepath, "w") as f:
                 # Header
                 f.write(f"# Meshtastic Network Report\n")
@@ -52,10 +61,102 @@ class NetworkReporter:
                 self._write_recommendations(f, analysis_issues, test_results)
 
             logger.info(f"Report generated successfully: {filepath}")
+            
+            # --- Persist Raw Data to JSON ---
+            try:
+                self._save_json_data(
+                    json_filepath,
+                    timestamp,
+                    nodes,
+                    test_results,
+                    analysis_issues,
+                    local_node,
+                    router_stats,
+                    route_analysis
+                )
+                logger.info(f"Raw data saved to: {json_filepath}")
+            except Exception as json_e:
+                logger.error(f"Failed to save JSON data: {json_e}")
+            
             return filepath
         except Exception as e:
             logger.error(f"Failed to generate report: {e}")
             return None
+
+    def _serialize_object(self, obj, visited=None):
+        """
+        Recursively convert objects to JSON-serializable format.
+        Handles protobuf objects, custom classes, and nested structures.
+        Prevents infinite recursion from circular references.
+        """
+        if visited is None:
+            visited = set()
+        
+        # Check for None and primitives first (before id check)
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        
+        # Check for circular references using object id
+        obj_id = id(obj)
+        if obj_id in visited:
+            # Return a placeholder for circular references
+            return "<circular reference>"
+        
+        # Mark this object as visited
+        visited.add(obj_id)
+        
+        try:
+            if isinstance(obj, (list, tuple)):
+                return [self._serialize_object(item, visited) for item in obj]
+            elif isinstance(obj, dict):
+                return {key: self._serialize_object(value, visited) for key, value in obj.items()}
+            elif hasattr(obj, '__dict__'):
+                # Convert objects with __dict__ to dictionary
+                return self._serialize_object(obj.__dict__, visited)
+            else:
+                # Fallback: convert to string
+                return str(obj)
+        finally:
+            # Remove from visited set when done processing this branch
+            visited.discard(obj_id)
+
+    def _save_json_data(self, filepath, timestamp, nodes, test_results, analysis_issues, 
+                        local_node, router_stats, route_analysis):
+        """
+        Saves all raw data to JSON file with session metadata.
+        """
+        # Serialize local_node
+        local_node_data = None
+        if local_node:
+            if hasattr(local_node, '__dict__'):
+                local_node_data = self._serialize_object(local_node)
+            elif isinstance(local_node, dict):
+                local_node_data = self._serialize_object(local_node)
+            else:
+                local_node_data = str(local_node)
+        
+        # Build the JSON structure
+        data = {
+            "session": {
+                "timestamp": timestamp,
+                "generated_at": datetime.now().isoformat(),
+                "config": self._serialize_object(self.config)
+            },
+            "data": {
+                "nodes": self._serialize_object(nodes),
+                "test_results": self._serialize_object(test_results),
+                "analysis_issues": analysis_issues,  # Already a list of strings
+                "router_stats": self._serialize_object(router_stats),
+                "route_analysis": self._serialize_object(route_analysis),
+                "local_node": local_node_data
+            }
+        }
+        
+        # Write to file with pretty formatting
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
 
     def _write_executive_summary(self, f, nodes, test_results, analysis_issues, local_node=None):
         f.write("## 1. Executive Summary\n")
@@ -249,11 +350,14 @@ class NetworkReporter:
             f.write("No routers found.\n\n")
             return
 
-        # Get radius from first stat entry (default to 2000m if missing)
-        radius_m = router_stats[0].get('radius', 2000)
-        radius_km = radius_m / 1000.0
+        # Get cluster_radius and router_density_threshold from config
+        cluster_radius_m = self.config.get('cluster_radius', 3000)
+        router_density_m = self.config.get('thresholds', {}).get('router_density_threshold', 2000)
+        
+        cluster_radius_km = cluster_radius_m / 1000.0
+        router_density_km = router_density_m / 1000.0
 
-        f.write(f"| Name | Role | Neighbors ({radius_km:.1f}km) | Routers ({radius_km:.1f}km) | ChUtil | Relayed | Status |\n")
+        f.write(f"| Name | Role | Neighbors ({cluster_radius_km:.1f}km) | Routers ({router_density_km:.1f}km) | ChUtil | Relayed | Status |\n")
         f.write("|---|---|---|---|---|---|---|\n")
         
         for s in router_stats:

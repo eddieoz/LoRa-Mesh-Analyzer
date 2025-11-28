@@ -26,7 +26,7 @@ class MeshMonitor:
         self.hostname = hostname
         self.config = self.load_config(config_file)
         self.analyzer = NetworkHealthAnalyzer(config=self.config, ignore_no_position=ignore_no_position)
-        self.reporter = NetworkReporter()
+        self.reporter = NetworkReporter(report_dir="reports", config=self.config)
         self.active_tester = None 
         self.running = False
         self.config = self.load_config(config_file)
@@ -353,8 +353,8 @@ class MeshMonitor:
                     # Report Issues
                     if issues:
                         logger.warning(f"Found {len(issues)} potential issues:")
-                        for issue in issues:
-                            logger.warning(f"  - {issue}")
+                        # for issue in issues:
+                        #     logger.warning(f"  - {issue}")
                     else:
                         logger.debug("No critical issues found in current scan.")
                     
