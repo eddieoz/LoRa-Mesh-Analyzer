@@ -1,5 +1,6 @@
 import unittest
-from mesh_monitor.analyzer import NetworkHealthAnalyzer
+from mesh_analyzer.analyzer import NetworkHealthAnalyzer
+import time
 
 class TestAnalyzerEnhancements(unittest.TestCase):
     def setUp(self):
@@ -37,7 +38,7 @@ class TestAnalyzerEnhancements(unittest.TestCase):
     def test_network_size(self):
         nodes = {}
         for i in range(61):
-            nodes[f'!{i}'] = {'user': {'id': f'!{i}'}}
+            nodes[f'!{i}'] = {'user': {'id': f'!{i}'}, 'lastHeard': time.time()}
             
         issues = self.analyzer.analyze(nodes)
         self.assertTrue(any("Network Size" in i for i in issues))

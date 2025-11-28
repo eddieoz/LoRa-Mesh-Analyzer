@@ -12,7 +12,7 @@ logger = logging.getLogger("Verification")
 
 def verify_utils():
     logger.info("Verifying utils.py...")
-    from mesh_monitor.utils import haversine, get_val, get_node_name
+    from mesh_analyzer.utils import haversine, get_val, get_node_name
     
     # Test haversine
     dist = haversine(0, 0, 1, 1)
@@ -49,21 +49,21 @@ def verify_modules():
     interface = MockInterface()
     
     # Test Analyzer
-    from mesh_monitor.analyzer import NetworkHealthAnalyzer
+    from mesh_analyzer.analyzer import NetworkHealthAnalyzer
     analyzer = NetworkHealthAnalyzer()
     issues = analyzer.analyze({})
     assert isinstance(issues, list), "Analyzer did not return list"
     logger.info("Analyzer instantiated and ran.")
     
     # Test ActiveTester
-    from mesh_monitor.active_tests import ActiveTester
+    from mesh_analyzer.active_tests import ActiveTester
     tester = ActiveTester(interface)
     assert hasattr(tester, 'lock'), "ActiveTester missing lock"
     assert isinstance(tester.lock, type(threading.Lock())), "ActiveTester lock is not a Lock"
     logger.info("ActiveTester instantiated and has lock.")
     
     # Test Reporter
-    from mesh_monitor.reporter import NetworkReporter
+    from mesh_analyzer.reporter import NetworkReporter
     reporter = NetworkReporter()
     logger.info("Reporter instantiated.")
 

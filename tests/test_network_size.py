@@ -1,6 +1,6 @@
 import unittest
 import time
-from mesh_monitor.analyzer import NetworkHealthAnalyzer
+from mesh_analyzer.analyzer import NetworkHealthAnalyzer
 
 class TestNetworkSize(unittest.TestCase):
     def setUp(self):

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch, mock_open
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from mesh_monitor.analyzer import NetworkHealthAnalyzer
-from mesh_monitor.monitor import MeshMonitor
-from mesh_monitor.active_tests import ActiveTester
+from mesh_analyzer.analyzer import NetworkHealthAnalyzer
+from mesh_analyzer.monitor import MeshMonitor
+from mesh_analyzer.active_tests import ActiveTester
 
 class TestNetworkMonitor(unittest.TestCase):
     def setUp(self):
@@ -270,7 +270,7 @@ class TestNetworkMonitor(unittest.TestCase):
 
     def test_local_config_check(self):
         print("\nRunning Local Config Check Test...")
-        from mesh_monitor.monitor import MeshMonitor
+        from mesh_analyzer.monitor import MeshMonitor
         from unittest.mock import MagicMock
         
         # Mock the interface and node
@@ -301,7 +301,7 @@ class TestNetworkMonitor(unittest.TestCase):
 
     def test_auto_discovery(self):
         print("\nRunning Auto-Discovery Test...")
-        from mesh_monitor.active_tests import ActiveTester
+        from mesh_analyzer.active_tests import ActiveTester
         
         # Mock Interface
         mock_interface = MagicMock()
@@ -370,7 +370,7 @@ class TestNetworkMonitor(unittest.TestCase):
         }
         
         issues = self.analyzer.analyze(self.mock_nodes)
-        density_warnings = [i for i in issues if "High Density" in i]
+        density_warnings = [i for i in issues if "High Router Density" in i]
         self.assertTrue(len(density_warnings) > 0, "Should detect high router density")
         print("  [Pass] Router Density Check")
 
@@ -398,7 +398,7 @@ class TestNetworkMonitor(unittest.TestCase):
 
     def test_reporting(self):
         print("\nRunning Reporting Test...")
-        from mesh_monitor.reporter import NetworkReporter
+        from mesh_analyzer.reporter import NetworkReporter
         
         # Initialize self.monitor mock since setUp doesn't do it
         self.monitor = MagicMock()
@@ -463,8 +463,8 @@ class TestNetworkMonitor(unittest.TestCase):
     def test_route_analysis(self):
         """Test the RouteAnalyzer and Reporter integration."""
         print("\nRunning Route Analysis Test...")
-        from mesh_monitor.route_analyzer import RouteAnalyzer
-        from mesh_monitor.reporter import NetworkReporter
+        from mesh_analyzer.route_analyzer import RouteAnalyzer
+        from mesh_analyzer.reporter import NetworkReporter
         
         # Mock Test Results with Routes
         test_results = [

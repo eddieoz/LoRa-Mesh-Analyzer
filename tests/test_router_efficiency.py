@@ -1,5 +1,5 @@
 import unittest
-from mesh_monitor.analyzer import NetworkHealthAnalyzer
+from mesh_analyzer.analyzer import NetworkHealthAnalyzer
 
 class TestRouterEfficiency(unittest.TestCase):
     def setUp(self):

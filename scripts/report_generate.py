@@ -18,11 +18,11 @@ import os
 import argparse
 from datetime import datetime
 
-# Add mesh_monitor to path
-sys.path.insert(0, os.path.dirname(__file__))
+# Add mesh_analyzer to path (parent directory)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from mesh_monitor.reporter import NetworkReporter
-from mesh_monitor.route_analyzer import RouteAnalyzer
+from mesh_analyzer.reporter import NetworkReporter
+from mesh_analyzer.route_analyzer import RouteAnalyzer
 
 
 def load_json_data(json_filepath):
@@ -100,7 +100,7 @@ def generate_report_from_json(json_filepath, output_path=None):
                     node['position']['longitude'] = pos['lon']
     
     # Recreate analyzer and re-run analysis to populate cluster_data and ch_util_data
-    from mesh_monitor.analyzer import NetworkHealthAnalyzer
+    from mesh_analyzer.analyzer import NetworkHealthAnalyzer
     analyzer = NetworkHealthAnalyzer(config=config)
     
     # Re-run analysis to populate analyzer data structures AND get new issues
@@ -119,13 +119,13 @@ def generate_report_from_json(json_filepath, output_path=None):
         # Monkey-patch the generate_report to use custom filename
         original_generate = reporter.generate_report
         
-        def custom_generate(nodes, test_results, analysis_issues, local_node=None, router_stats=None, analyzer=None):
+        def custom_generate(nodes, test_results, analysis_issues, local_node=None, router_stats=None, analyzer=None, override_timestamp=None, override_location=None, save_json=True):
             # Temporarily change the method to use custom filename
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             custom_filename = os.path.basename(output_path)
             filepath = os.path.join(report_dir, custom_filename)
             
-            from mesh_monitor.route_analyzer import RouteAnalyzer
+            from mesh_analyzer.route_analyzer import RouteAnalyzer
             route_analyzer = RouteAnalyzer(nodes)
             route_analysis_local = route_analyzer.analyze_routes(test_results)
             

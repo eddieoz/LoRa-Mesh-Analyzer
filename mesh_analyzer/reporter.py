@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from .utils import get_val, haversine, get_node_name
 
-from mesh_monitor.route_analyzer import RouteAnalyzer
+from mesh_analyzer.route_analyzer import RouteAnalyzer
 
 logger = logging.getLogger(__name__)
 

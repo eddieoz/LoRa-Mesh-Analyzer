@@ -276,7 +276,7 @@ class NetworkHealthAnalyzer:
         if not test_results:
             return issues
         
-        from mesh_monitor.route_analyzer import RouteAnalyzer
+        from mesh_analyzer.route_analyzer import RouteAnalyzer
         route_analyzer = RouteAnalyzer(nodes)
         relay_usage = route_analyzer._analyze_relay_usage(
             [r for r in test_results if r.get('status') == 'success']

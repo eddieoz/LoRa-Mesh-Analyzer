@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-from mesh_monitor.active_tests import ActiveTester
+from mesh_analyzer.active_tests import ActiveTester
 
 class TestRouterClusters(unittest.TestCase):
     def setUp(self):

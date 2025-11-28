@@ -9,10 +9,11 @@ import os
 import json
 from datetime import datetime
 
-# Add mesh_monitor to path
+# Add mesh_analyzer to path
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from mesh_monitor.reporter import NetworkReporter
+from mesh_analyzer.reporter import NetworkReporter
 
 
 def create_mock_data():

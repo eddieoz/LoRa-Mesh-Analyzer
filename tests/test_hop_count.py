@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import Mock
-from mesh_monitor.active_tests import ActiveTester
+from mesh_analyzer.active_tests import ActiveTester
 
 
 class TestHopCountCalculation(unittest.TestCase):
