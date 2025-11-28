@@ -112,6 +112,9 @@ class MeshMonitor:
                 # Create ActiveTester with auto-discovery (no online_nodes needed)
                 traceroute_timeout = self.config.get('traceroute_timeout', 60)
                 test_interval = self.config.get('active_test_interval', 30)
+                analysis_mode = self.config.get('analysis_mode', 'distance')
+                cluster_radius = self.config.get('cluster_radius', 2000)
+                
                 self.active_tester = ActiveTester(
                     self.interface, 
                     priority_nodes=[],  # Empty - will trigger auto-discovery
@@ -120,7 +123,9 @@ class MeshMonitor:
                     online_nodes=set(),  # Not used anymore - discovery uses lastHeard
                     local_node_id=local_id,
                     traceroute_timeout=traceroute_timeout,
-                    test_interval=test_interval
+                    test_interval=test_interval,
+                    analysis_mode=analysis_mode,
+                    cluster_radius=cluster_radius
                 )
                 
                 logger.info("Active testing started with auto-discovered nodes.")
@@ -152,6 +157,9 @@ class MeshMonitor:
 
                  traceroute_timeout = self.config.get('traceroute_timeout', 60)
                  test_interval = self.config.get('active_test_interval', 30)
+                 analysis_mode = self.config.get('analysis_mode', 'distance')
+                 cluster_radius = self.config.get('cluster_radius', 2000)
+
                  self.active_tester = ActiveTester(
                     self.interface, 
                     priority_nodes=priority_nodes,
@@ -159,7 +167,9 @@ class MeshMonitor:
                     auto_discovery_limit=auto_discovery_limit,
                     local_node_id=local_id,
                     traceroute_timeout=traceroute_timeout,
-                    test_interval=test_interval
+                    test_interval=test_interval,
+                    analysis_mode=analysis_mode,
+                    cluster_radius=cluster_radius
                 )
 
             self.main_loop()
@@ -330,7 +340,8 @@ class MeshMonitor:
                         my_node = self.interface.localNode
                     
                     # Run Analysis
-                    issues = self.analyzer.analyze(nodes, packet_history=self.packet_history, my_node=my_node)
+                    test_results = self.active_tester.test_results if self.active_tester else []
+                    issues = self.analyzer.analyze(nodes, packet_history=self.packet_history, my_node=my_node, test_results=test_results)
                     
                     # Run Router Efficiency Analysis (using accumulated test results if available)
                     if self.active_tester:

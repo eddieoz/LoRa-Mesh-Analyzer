@@ -14,9 +14,10 @@ class NetworkHealthAnalyzer:
         self.ch_util_threshold = thresholds.get('channel_utilization', 25.0)
         self.air_util_threshold = thresholds.get('air_util_tx', 7.0) # Updated default to 7%
         self.router_density_threshold = thresholds.get('router_density_threshold', 2000)
+        self.active_threshold_seconds = thresholds.get('active_threshold_seconds', 7200)
         self.max_nodes_long_fast = self.config.get('max_nodes_for_long_fast', 60)
 
-    def analyze(self, nodes, packet_history=None, my_node=None):
+    def analyze(self, nodes, packet_history=None, my_node=None, test_results=None):
         """
         Analyzes the node DB and packet history for potential issues.
         Returns a list of issue strings.
@@ -79,7 +80,7 @@ class NetworkHealthAnalyzer:
             issues.extend(self.check_hop_counts(packet_history, nodes))
 
         # --- Geospatial Analysis ---
-        issues.extend(self.check_router_density(nodes))
+        issues.extend(self.check_router_density(nodes, test_results))
         issues.extend(self.check_network_size_and_preset(nodes))
         if my_node:
             issues.extend(self.check_signal_vs_distance(nodes, my_node))
@@ -155,6 +156,12 @@ class NetworkHealthAnalyzer:
                     
                     if r['id'] in route_hex:
                         relay_count += 1
+                    
+                    # Check return path as well
+                    route_back = res.get('route_back', [])
+                    route_back_hex = [f"!{n:08x}" if isinstance(n, int) else n for n in route_back]
+                    if r['id'] in route_back_hex:
+                        relay_count += 1
             
             # C. Channel Util
             ch_util = get_val(r['metrics'], 'channelUtilization', 0)
@@ -171,6 +178,8 @@ class NetworkHealthAnalyzer:
             stats.append({
                 'id': r['id'],
                 'name': r['name'],
+                'lat': r['lat'],
+                'lon': r['lon'],
                 'role': r['role'],
                 'neighbors_2km': total_neighbors,
                 'routers_2km': nearby_routers,
@@ -326,62 +335,97 @@ class NetworkHealthAnalyzer:
         but we can warn based on size.
         """
         issues = []
-        total_nodes = len(nodes)
+        issues = []
         
-        if total_nodes > self.max_nodes_long_fast:
-             issues.append(f"Network Size: {total_nodes} nodes detected. If using LONG_FAST, consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST) to reduce collision probability.")
+        # Filter for active nodes
+        current_time = time.time()
+        active_nodes = 0
+        
+        for node in nodes.values():
+            last_heard = get_val(node, 'lastHeard', 0)
+            # Some nodes might use 'last_heard' or other keys, but standard is usually lastHeard in the node dict
+            # If it's 0, it might be very old or unknown.
+            
+            if current_time - last_heard < self.active_threshold_seconds:
+                active_nodes += 1
+        
+        if active_nodes > self.max_nodes_long_fast:
+             issues.append(f"Network Size: {active_nodes} active nodes detected (seen in last {self.active_threshold_seconds/3600:.1f}h). If using LONG_FAST, consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST) to reduce collision probability.")
              
         return issues
 
-    def check_router_density(self, nodes):
+    def check_router_density(self, nodes, test_results=None):
         """
         Checks for high density of routers.
-        New Logic: Check for > 2 routers within 2km radius of each other.
+        Identifies clusters of routers within 'router_density_threshold'.
+        Recommends keeping the most effective router (highest relay count) and demoting others.
         """
         issues = []
-        routers = []
+        
+        # 1. Get Router Stats (includes relay counts)
+        stats = self.get_router_stats(nodes, test_results)
+        # Map ID to stat for easy lookup
+        stat_map = {s['id']: s for s in stats}
         
         # Filter for routers with valid position
-        for node_id, node in nodes.items():
-            user = get_val(node, 'user', {})
-            role = get_val(user, 'role')
-            
-            is_router = False
-            if isinstance(role, int):
-                if role in [2, 3, 4, 9]: # ROUTER, ROUTER_CLIENT, REPEATER, ROUTER_LATE
-                    is_router = True
-            elif role in ['ROUTER', 'REPEATER', 'ROUTER_CLIENT', 'ROUTER_LATE']:
-                is_router = True
-            
-            pos = get_val(node, 'position', {})
-            lat = get_val(pos, 'latitude')
-            lon = get_val(pos, 'longitude')
-            
-            if is_router and lat is not None and lon is not None:
-                routers.append({
-                    'id': node_id,
-                    'name': get_node_name(node, node_id),
-                    'lat': lat,
-                    'lon': lon
-                })
+        routers = []
+        for s in stats:
+             # get_router_stats already filters for routers with position
+             routers.append(s)
+
+        if not routers:
+            return issues
+
+        # 2. Build Clusters
+        # Adjacency list: index -> list of neighbor indices
+        adj = {i: [] for i in range(len(routers))}
         
-        # Check density for each router
-        reported_pairs = set()
-        
-        for i, r1 in enumerate(routers):
-            nearby_routers = []
-            for j, r2 in enumerate(routers):
-                if i == j: continue
-                
+        for i in range(len(routers)):
+            for j in range(i + 1, len(routers)):
+                r1 = routers[i]
+                r2 = routers[j]
                 dist = haversine(r1['lat'], r1['lon'], r2['lat'], r2['lon'])
-                if dist < self.router_density_threshold: 
-                    nearby_routers.append(r2)
+                
+                if dist < self.router_density_threshold:
+                    adj[i].append(j)
+                    adj[j].append(i)
+        
+        # Find connected components (clusters)
+        visited = set()
+        clusters = []
+        
+        for i in range(len(routers)):
+            if i not in visited:
+                component = []
+                stack = [i]
+                visited.add(i)
+                while stack:
+                    curr = stack.pop()
+                    component.append(routers[curr])
+                    for neighbor in adj[curr]:
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            stack.append(neighbor)
+                if len(component) > 1:
+                    clusters.append(component)
+        
+        # 3. Analyze Clusters and Generate Recommendations
+        for cluster in clusters:
+            # Sort by relay_count (desc), then neighbors_2km (desc)
+            # We want the "best" router first
+            cluster.sort(key=lambda x: (x['relay_count'], x['neighbors_2km']), reverse=True)
             
-            if len(nearby_routers) >= 1:
-                # Construct a unique key for this cluster to avoid duplicate messages
-                # (Simple approach: just report for the center node)
-                names = [r['name'] for r in nearby_routers]
-                issues.append(f"Topology: High Router Density! '{r1['name']}' has {len(nearby_routers)} other routers within {self.router_density_threshold}m ({', '.join(names)}). Consider changing some to CLIENT.")
+            best_router = cluster[0]
+            others = cluster[1:]
+            
+            other_names = [o['name'] for o in others]
+            
+            # Construct message
+            msg = f"Topology: High Router Density! Found cluster of {len(cluster)} routers. "
+            msg += f"Best positioned seems to be '{best_router['name']}' ({best_router['relay_count']} relays). "
+            msg += f"Consider changing others to CLIENT: {', '.join(other_names)}."
+            
+            issues.append(msg)
 
         return issues
 

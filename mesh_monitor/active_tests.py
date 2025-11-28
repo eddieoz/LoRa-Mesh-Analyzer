@@ -7,7 +7,7 @@ from .utils import get_val, haversine
 logger = logging.getLogger(__name__)
 
 class ActiveTester:
-    def __init__(self, interface, priority_nodes=None, auto_discovery_roles=None, auto_discovery_limit=5, online_nodes=None, local_node_id=None, traceroute_timeout=60, test_interval=30):
+    def __init__(self, interface, priority_nodes=None, auto_discovery_roles=None, auto_discovery_limit=5, online_nodes=None, local_node_id=None, traceroute_timeout=60, test_interval=30, analysis_mode='distance', cluster_radius=2000):
         self.interface = interface
         self.priority_nodes = priority_nodes if priority_nodes else []
         self.auto_discovery_roles = auto_discovery_roles if auto_discovery_roles else ['ROUTER', 'REPEATER']
@@ -19,6 +19,8 @@ class ActiveTester:
         self.current_priority_index = 0
         self.pending_traceroute = None # Store ID of node we are waiting for
         self.traceroute_timeout = traceroute_timeout # Seconds to wait for a response
+        self.analysis_mode = analysis_mode
+        self.cluster_radius = cluster_radius
         
         # Reporting Data
         self.test_results = [] # List of dicts: {node_id, status, rtt, hops, snr, timestamp}
@@ -70,6 +72,9 @@ class ActiveTester:
         Selects nodes based on lastHeard timestamp, roles, and geolocation.
         Uses the existing node database instead of waiting for packets.
         """
+        if self.analysis_mode == 'router_clusters':
+            return self._get_router_cluster_nodes()
+
         candidates = []
         nodes = self.interface.nodes
         
@@ -217,6 +222,88 @@ class ActiveTester:
         # Return just the IDs
         selected_ids = [c['id'] for c in final_candidates]
         return selected_ids
+
+    def _get_router_cluster_nodes(self):
+        """
+        Selects nodes that are within cluster_radius of known routers.
+        """
+        logger.info(f"Auto-discovery mode: Router Clusters (Radius: {self.cluster_radius}m)")
+        nodes = self.interface.nodes
+        routers = []
+        
+        # 1. Identify Routers with Position
+        for node_id, node in nodes.items():
+            user = get_val(node, 'user', {})
+            role = get_val(user, 'role')
+            
+            is_router = False
+            if isinstance(role, int):
+                if role in [2, 3, 4, 9]: # ROUTER, ROUTER_CLIENT, REPEATER, ROUTER_LATE
+                    is_router = True
+            elif role in ['ROUTER', 'REPEATER', 'ROUTER_CLIENT', 'ROUTER_LATE']:
+                is_router = True
+            
+            if is_router:
+                pos = get_val(node, 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                
+                # Handle integer coordinates if needed
+                if lat is None:
+                    lat_i = get_val(pos, 'latitude_i') or get_val(pos, 'latitudeI')
+                    if lat_i is not None: lat = lat_i / 1e7
+                if lon is None:
+                    lon_i = get_val(pos, 'longitude_i') or get_val(pos, 'longitudeI')
+                    if lon_i is not None: lon = lon_i / 1e7
+
+                if lat is not None and lon is not None:
+                    routers.append({
+                        'id': node_id,
+                        'lat': lat,
+                        'lon': lon
+                    })
+        
+        logger.info(f"Found {len(routers)} routers with position.")
+        
+        # 2. Find Neighbors for each Router
+        candidates = set()
+        
+        for r in routers:
+            for node_id, node in nodes.items():
+                if node_id == r['id']: continue
+                
+                # Check if we should ignore this node (e.g. no lastHeard)
+                last_heard = get_val(node, 'lastHeard')
+                if not last_heard: continue
+
+                pos = get_val(node, 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                
+                # Handle integer coordinates
+                if lat is None:
+                    lat_i = get_val(pos, 'latitude_i') or get_val(pos, 'latitudeI')
+                    if lat_i is not None: lat = lat_i / 1e7
+                if lon is None:
+                    lon_i = get_val(pos, 'longitude_i') or get_val(pos, 'longitudeI')
+                    if lon_i is not None: lon = lon_i / 1e7
+                
+                if lat is not None and lon is not None:
+                    dist = haversine(r['lat'], r['lon'], lat, lon)
+                    if dist <= self.cluster_radius:
+                        candidates.add(node_id)
+        
+        # 3. Select Nodes
+        # Convert to list and sort/limit
+        candidate_list = list(candidates)
+        
+        # Sort by lastHeard (most recent first)
+        candidate_list.sort(key=lambda nid: get_val(nodes[nid], 'lastHeard', 0), reverse=True)
+        
+        selected = candidate_list[:self.auto_discovery_limit]
+        logger.info(f"Selected {len(selected)} nodes near routers: {selected}")
+        
+        return selected
 
     def send_traceroute(self, dest_node_id):
         """
