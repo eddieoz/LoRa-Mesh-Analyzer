@@ -9,6 +9,7 @@ setup(
         "meshtastic",
         "pypubsub",
         "PyYAML",
+        "markdown",
     ],
     entry_points={
         "console_scripts": [

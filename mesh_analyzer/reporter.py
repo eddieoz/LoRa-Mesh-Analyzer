@@ -104,7 +104,7 @@ class NetworkReporter:
             # 1. Markdown Output
             if 'markdown' in output_formats:
                 md_filepath = os.path.join(self.report_dir, f"{base_name}.md")
-                with open(md_filepath, "w") as md_file:
+                with open(md_filepath, "w", encoding='utf-8') as md_file:
                     md_file.write(markdown_content)
                 generated_files.append(md_filepath)
                 logger.info(f"Report generated: {md_filepath}")
@@ -133,7 +133,7 @@ class NetworkReporter:
                 html_content = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
                 full_html = f"<!DOCTYPE html>\n<html>\n<head>\n<meta charset='utf-8'>\n<title>Meshtastic Network Report - {report_date}</title>\n{css}\n</head>\n<body>\n{html_content}\n</body>\n</html>"
                 
-                with open(html_filepath, "w") as html_file:
+                with open(html_filepath, "w", encoding='utf-8') as html_file:
                     html_file.write(full_html)
                 generated_files.append(html_filepath)
                 logger.info(f"Report generated: {html_filepath}")
@@ -237,7 +237,7 @@ class NetworkReporter:
         }
         
         # Write to file with pretty formatting
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, default=str)
 
     def _get_location_string(self, nodes, local_node):

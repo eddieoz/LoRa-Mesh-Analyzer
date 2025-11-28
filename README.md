@@ -2,169 +2,47 @@
 
 An autonomous Python application designed to monitor, test, and diagnose the health of a Meshtastic mesh network. It identifies "toxic" behaviors, congestion, and configuration issues that can degrade network performance.
 
-## Features
+## Documentation
 
-The monitor runs a continuous loop (every 60 seconds) and performs the following checks:
+Full documentation is available in the `docs/` directory:
 
-### 1. Passive Health Checks
-*   **Congestion Detection**: Flags nodes reporting a Channel Utilization (`ChUtil`) > **25%**. High utilization leads to packet collisions and mesh instability.
-*   **Spam Detection**: 
-    *   **Airtime**: Flags nodes with an Airtime Transmit Duty Cycle (`AirUtilTx`) > **10%**.
-    *   **Duplication**: Flags nodes causing excessive message duplication (>3 copies of the same packet).
-*   **Topology Checks**:
-    *   **Hop Count**: Flags nodes that are >3 hops away, indicating a potentially inefficient topology.
-*   **Role Audit**:
-    *   **Deprecated Roles**: Flags any node using the deprecated `ROUTER_CLIENT` role.
-    *   **Placement Verification**: Flags `ROUTER` or `REPEATER` nodes that do not have a valid GPS position.
+-   **[Usage Guide](docs/usage.md)**: How to run the monitor (USB/TCP) and command-line options.
+-   **[Configuration Guide](docs/configuration.md)**: Detailed explanation of `config.yaml` settings.
+-   **[Report Generation](docs/report_generation.md)**: How to use the `report_generate.py` tool.
+-   **[Architecture](docs/architecture.md)**: Overview of the codebase structure and components.
 
-    *   **Placement Verification**: Flags `ROUTER` or `REPEATER` nodes that do not have a valid GPS position.
-    *   **Router Density**: Flags `ROUTER` nodes that are physically too close (default < 2km) to each other, indicating redundancy.
-*   **Network Size**: Warns if the network size exceeds the recommendation for the current preset (e.g. > 60 nodes for LONG_FAST).
+## Quick Start
 
-### 2. Auto-Discovery of Targets
-If `priority_nodes` is empty in `config.yaml`, the monitor will automatically select targets based on:
-- **Roles**: Prioritizes `ROUTER`, `ROUTER_CLIENT`, `REPEATER`, then `CLIENT` (configurable).
-- **Geolocation**: Selects a mix of the nearest and furthest nodes to test both neighborhood and long-range connectivity.
-- **Limit**: Configurable limit (default 5) to keep the test cycle manageable.
-
-### 3. Geospatial Analysis
-*   **Signal vs Distance**: Flags nodes that are close (< 1km) but have poor SNR (< -5dB), indicating potential hardware issues or obstructions.
-*   **Distance Calculation**: Uses GPS coordinates to calculate distances between nodes for topology analysis.
-
-### 3. Route Analysis (New!)
-*   **Relay Usage Statistics**: Identifies which nodes are acting as relays most frequently (your network's "backbone").
-*   **Bottleneck Detection**: Flags nodes that are critical for reaching multiple destinations (single points of failure).
-*   **Common Paths**: Analyzes path stability to identify fluctuating routes.
-*   **Link Quality**: Aggregates SNR data to visualize link quality between nodes.
-
-### 4. Local Configuration Analysis (On Boot)
-*   **Role Check**: Warns if the monitoring node itself is set to `ROUTER` or `ROUTER_CLIENT` (Monitoring is best done as `CLIENT`).
-*   **Hop Limit**: Warns if the default hop limit is > 3, which can cause network congestion.
-
-### 5. Data Persistence & Regeneration
-*   **JSON Data**: Saves all raw data (nodes, test results, analysis) to a JSON file alongside the Markdown report.
-*   **Regeneration Tool**: Includes `report_generate.py` to regenerate reports from JSON files, allowing for format updates or re-analysis without re-running tests.
-
-### 6. Comprehensive Reporting
-*   Generates a detailed **Markdown Report** (`report-YYYYMMDD-HHMMSS.md`) after each test cycle.
-*   Includes:
-    *   Executive Summary
-    *   Network Health Findings
-    *   Route Analysis (Relays, Bottlenecks)
-    *   Detailed Traceroute Results Table
-
-## Installation
-
-1.  **Clone the repository** (if applicable) or navigate to the project folder.
-2.  **Set up a Virtual Environment** (Recommended):
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
-3.  **Install Dependencies**:
+1.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
 
-## Usage
-
-### Basic Run (USB/Serial)
-Connect your Meshtastic device via USB and run:
-```bash
-python3 main.py
-```
-
-### Network Connection (TCP)
-If your node is on the network (e.g., WiFi):
-```bash
-python3 main.py --tcp 192.168.1.10
-```
-
-### Options
-*   `--ignore-no-position`: Suppress warnings about routers without a position (useful for portable routers or privacy).
+2.  **Configure**:
+    Copy `sample-config.yaml` to `config.yaml` and edit it:
     ```bash
-    python3 main.py --ignore-no-position
+    cp sample-config.yaml config.yaml
+    nano config.yaml
     ```
 
-### Regenerating Reports
-To regenerate a report from a saved JSON file (e.g., to apply new analysis logic):
-```bash
-python3 report_generate.py reports/report-YYYYMMDD-HHMMSS.json
-```
-You can also specify a custom output filename:
-```bash
-python3 report_generate.py reports/report-YYYYMMDD-HHMMSS.json --output my_custom_report.md
-```
+3.  **Run**:
+    ```bash
+    python3 main.py
+    ```
 
-## Configuration (Priority Testing)
+## Features at a Glance
 
-To prioritize testing specific nodes (e.g., to check if a router is reachable), add their IDs to `config.yaml`:
-
-```yaml
-priority_nodes:
-  - "!12345678" 
-  - "!87654321"
-
-# Auto-Discovery Settings
-analysis_mode: router_clusters # 'distance' or 'router_clusters'
-cluster_radius: 3000 # Meters
-
-# Generate report after N full testing cycles
-report_cycles: 1
-
-# Active Testing Settings
-traceroute_timeout: 90
-active_test_interval: 30
-
-# Manual Geolocation Overrides
-manual_positions:
-  "!12345678":
-    lat: 59.12345
-    lon: 24.12345
-
-# Thresholds for Analysis
-thresholds:
-  channel_utilization: 25.0 # Percent
-  air_util_tx: 7.0 # Percent
-  router_density_threshold: 2000 # Meters (Minimum distance between routers)
-
-# Network Size Settings
-max_nodes_for_long_fast: 60
-```
-
-The monitor will cycle through these nodes and send traceroute requests to them.
-
-## Interpreting Logs
-
-The monitor outputs logs to the console. Here is how to interpret common messages:
-
-### Health Warnings
-```text
-WARNING - Found 2 potential issues:
-WARNING -   - Congestion: Node 'MountainRepeater' reports ChUtil 45.0% (Threshold: 25.0%)
-```
-*   **Meaning**: The node 'MountainRepeater' is seeing very high traffic. It might be in a noisy area or hearing too many nodes.
-*   **Action**: Investigate the node. If it's a router, consider moving it or changing its settings.
-
-```text
-WARNING -   - Config: Node 'OldUnit' is using deprecated role 'ROUTER_CLIENT'.
-```
-*   **Meaning**: 'OldUnit' is configured with a role that is known to cause routing loops.
-*   **Action**: Change the role to `CLIENT`, `ROUTER`, or `CLIENT_MUTE`.
-
-### Active Test Logs
-```text
-INFO - Sending traceroute to priority node !12345678...
-...
-INFO - Received Traceroute Packet: {...}
-```
-*   **Meaning**: The monitor sent a test packet and received a response.
-*   **Action**: Check the hop count in the response (if visible/parsed) to verify the path.
+-   **Passive Health Checks**: Detects congestion (>25% ChUtil), spam (>10% AirUtil), and bad topology.
+-   **Auto-Discovery**: Automatically finds and tests important nodes (Routers, Repeaters).
+-   **Active Testing**: Performs traceroutes to map the network and find dead zones.
+-   **Route Analysis**: Identifies critical relays and bottlenecks.
+-   **Reporting**: Generates detailed Markdown and HTML reports with network insights.
+-   **Data Persistence**: Saves all data to JSON for future analysis.
 
 ## Project Structure
-*   `mesh_analyzer/`: Source code.
-    *   `monitor.py`: Main application loop.
-    *   `analyzer.py`: Health check logic.
-    *   `active_tests.py`: Traceroute logic.
-*   `tests/`: Unit tests.
-*   `config.yaml`: Configuration file.
+
+-   `mesh_analyzer/`: Core application logic.
+-   `scripts/`: Utilities like `report_generate.py`.
+-   `reports/`: Output directory for reports and data.
+-   `docs/`: Detailed documentation.
+

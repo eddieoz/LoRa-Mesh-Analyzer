@@ -44,6 +44,9 @@ traceroute_timeout: 90
 # Minimum interval between tests (in seconds)
 active_test_interval: 30
 
+# Maximum hops for traceroute
+hop_limit: 7
+
 # Manual Geolocation Overrides
 # Useful for nodes that don't report position
 # Format: "!nodeid": {lat: 0.0, lon: 0.0}

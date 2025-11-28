@@ -34,7 +34,7 @@ def load_json_data(json_filepath):
         sys.exit(1)
     
     try:
-        with open(json_filepath, 'r') as f:
+        with open(json_filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data
     except json.JSONDecodeError as e:
