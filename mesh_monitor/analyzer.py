@@ -16,6 +16,10 @@ class NetworkHealthAnalyzer:
         self.router_density_threshold = thresholds.get('router_density_threshold', 2000)
         self.active_threshold_seconds = thresholds.get('active_threshold_seconds', 7200)
         self.max_nodes_long_fast = self.config.get('max_nodes_for_long_fast', 60)
+        
+        # Data storage for detailed analysis
+        self.cluster_data = []  # Router cluster details with distances
+        self.ch_util_data = {}  # Channel utilization analysis
 
     def analyze(self, nodes, packet_history=None, my_node=None, test_results=None):
         """
@@ -80,12 +84,18 @@ class NetworkHealthAnalyzer:
             issues.extend(self.check_hop_counts(packet_history, nodes))
 
         # --- Geospatial Analysis ---
-        issues.extend(self.check_router_density(nodes, test_results))
+        density_issues, self.cluster_data = self.check_router_density(nodes, test_results)
+        issues.extend(density_issues)
         issues.extend(self.check_network_size_and_preset(nodes))
         if my_node:
             issues.extend(self.check_signal_vs_distance(nodes, my_node))
+        
+        # --- Advanced Analysis ---
+        self.analyze_channel_utilization(nodes)  # Stores data in self.ch_util_data
+        issues.extend(self.check_client_relaying_over_router(nodes, test_results))
 
         return issues
+
 
     def get_router_stats(self, nodes, test_results=None):
         """
@@ -210,6 +220,156 @@ class NetworkHealthAnalyzer:
 
         return issues
 
+    def analyze_channel_utilization(self, nodes):
+        """
+        Analyzes channel utilization across the network.
+        Determines if congestion is mesh-wide or isolated to specific nodes.
+        Returns detailed data for reporting.
+        """
+        high_util_nodes = []
+        active_node_count = 0
+        current_time = time.time()
+        
+        for node_id, node in nodes.items():
+            # Check if node is active
+            last_heard = get_val(node, 'lastHeard', 0)
+            if current_time - last_heard < self.active_threshold_seconds:
+                active_node_count += 1
+            else:
+                continue  # Skip inactive nodes
+            
+            # Check channel utilization
+            metrics = get_val(node, 'deviceMetrics', {})
+            ch_util = get_val(metrics, 'channelUtilization', 0)
+            
+            if ch_util > self.ch_util_threshold:
+                node_name = get_node_name(node, node_id)
+                high_util_nodes.append({
+                    'id': node_id,
+                    'name': node_name,
+                    'util_pct': ch_util
+                })
+        
+        # Determine if widespread or isolated
+        if not high_util_nodes:
+            self.ch_util_data = {'type': 'none', 'nodes': []}
+            return
+        
+        # If >30% of active nodes have high util, it's mesh-wide
+        is_widespread = len(high_util_nodes) / active_node_count > 0.30 if active_node_count > 0 else False
+        
+        self.ch_util_data = {
+            'type': 'widespread' if is_widespread else 'isolated',
+            'nodes': high_util_nodes,
+            'active_count': active_node_count,
+            'affected_count': len(high_util_nodes)
+        }
+
+    def check_client_relaying_over_router(self, nodes, test_results):
+        """
+        Detects ineffective routers by checking if nearby CLIENT nodes
+        are relaying more frequently than the router itself.
+        Uses router_density_threshold as the radius to check.
+        """
+        issues = []
+        
+        if not test_results:
+            return issues
+        
+        from mesh_monitor.route_analyzer import RouteAnalyzer
+        route_analyzer = RouteAnalyzer(nodes)
+        relay_usage = route_analyzer._analyze_relay_usage(
+            [r for r in test_results if r.get('status') == 'success']
+        )
+        
+        # Build relay count lookup
+        relay_counts = {item['id']: item['count'] for item in relay_usage}
+        
+        # Find all routers
+        routers = []
+        for node_id, node in nodes.items():
+            user = get_val(node, 'user', {})
+            role = get_val(user, 'role')
+            
+            is_router = False
+            if isinstance(role, int):
+                if role in [2, 3, 4, 9]: # ROUTER, ROUTER_CLIENT, REPEATER, ROUTER_LATE
+                    is_router = True
+            elif role in ['ROUTER', 'REPEATER', 'ROUTER_CLIENT', 'ROUTER_LATE']:
+                is_router = True
+            
+            if is_router:
+                pos = get_val(node, 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                metrics = get_val(node, 'deviceMetrics', {})
+                ch_util = get_val(metrics, 'channelUtilization', 0)
+                
+                if lat is not None and lon is not None:
+                    routers.append({
+                        'id': node_id,
+                        'name': get_node_name(node, node_id),
+                        'lat': lat,
+                        'lon': lon,
+                        'relay_count': relay_counts.get(node_id, 0),
+                        'ch_util': ch_util
+                    })
+        
+        # For each router, check nearby clients
+        for router in routers:
+            router_relays = router['relay_count']
+            router_ch_util = router['ch_util']
+            nearby_clients = []
+            
+            for node_id, node in nodes.items():
+                if node_id == router['id']:
+                    continue
+                
+                user = get_val(node, 'user', {})
+                role = get_val(user, 'role')
+                
+                # Check if it's a client
+                is_client = False
+                if role is None:
+                    is_client = True # Assume client if role is unknown
+                elif isinstance(role, int):
+                    if role in [0, 1, 8]: # CLIENT, CLIENT_MUTE, etc
+                        is_client = True
+                elif role in ['CLIENT', 'CLIENT_MUTE', 'TRACKER', 'SENSOR']:
+                    is_client = True
+                
+                if not is_client:
+                    continue
+                
+                # Check distance
+                pos = get_val(node, 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                
+                if lat is not None and lon is not None:
+                    dist = haversine(router['lat'], router['lon'], lat, lon)
+                        
+                    if dist <= self.router_density_threshold:
+                        client_relays = relay_counts.get(node_id, 0)
+                        if client_relays >= router_relays * 2 and client_relays > 0:
+                            nearby_clients.append({
+                                'name': get_node_name(node, node_id),
+                                'relay_count': client_relays,
+                                'distance_km': dist / 1000
+                            })
+            
+            # Report if clients are relaying more than router
+            if nearby_clients:
+                for client in nearby_clients:
+                    msg = f"Efficiency: Router '{router['name']}' has {router_relays} relays, "
+                    msg += f"but nearby client '{client['name']}' ({client['distance_km']:.2f}km away) has {client['relay_count']} relays. "
+                    msg += f"Router ChUtil: {router_ch_util:.1f}%. "
+                    msg += f"Router may be ineffective - check antenna, placement, or configuration."
+                    issues.append(msg)
+        
+        return issues
+
+
     def check_route_quality(self, nodes, test_results):
         """
         Analyzes the quality of routes found in traceroute tests.
@@ -287,48 +447,7 @@ class NetworkHealthAnalyzer:
                          issues.append(f"Topology: Node '{node_name}' is {hops_away} hops away. (Ideally <= 3)")
         return list(set(issues))
 
-    def check_router_density(self, nodes):
-        """
-        Checks if ROUTER nodes are too close to each other (< 500m).
-        """
-        issues = []
-        routers = []
-        
-        # Filter for routers with valid position
-        for node_id, node in nodes.items():
-            user = get_val(node, 'user', {})
-            role = get_val(user, 'role')
-            
-            is_router = False
-            if isinstance(role, int):
-                if role in [2, 3, 4]: # ROUTER, ROUTER_CLIENT, REPEATER
-                    is_router = True
-            elif role in ['ROUTER', 'REPEATER', 'ROUTER_CLIENT']:
-                is_router = True
-            
-            pos = get_val(node, 'position', {})
-            lat = get_val(pos, 'latitude')
-            lon = get_val(pos, 'longitude')
-            
-            if is_router and lat is not None and lon is not None:
-                routers.append({
-                    'id': node_id,
-                    'name': get_node_name(node, node_id),
-                    'lat': lat,
-                    'lon': lon
-                })
-        
-        # Compare every pair
-        for i in range(len(routers)):
-            for j in range(i + 1, len(routers)):
-                r1 = routers[i]
-                r2 = routers[j]
-                dist = haversine(r1['lat'], r1['lon'], r2['lat'], r2['lon'])
-                
-                if dist > 0 and dist < 500: # 500 meters threshold
-                    issues.append(f"Topology: High Density! Routers '{r1['name']}' and '{r2['name']}' are only {dist:.0f}m apart. Consider changing one to CLIENT.")
-        
-        return issues
+
 
     def check_network_size_and_preset(self, nodes):
         """
@@ -361,8 +480,10 @@ class NetworkHealthAnalyzer:
         Checks for high density of routers.
         Identifies clusters of routers within 'router_density_threshold'.
         Recommends keeping the most effective router (highest relay count) and demoting others.
+        Returns: (issues, cluster_data)
         """
         issues = []
+        cluster_data = []  # New: detailed cluster information
         
         # 1. Get Router Stats (includes relay counts)
         stats = self.get_router_stats(nodes, test_results)
@@ -376,7 +497,7 @@ class NetworkHealthAnalyzer:
              routers.append(s)
 
         if not routers:
-            return issues
+            return issues, cluster_data
 
         # 2. Build Clusters
         # Adjacency list: index -> list of neighbor indices
@@ -422,14 +543,37 @@ class NetworkHealthAnalyzer:
             
             other_names = [o['name'] for o in others]
             
-            # Construct message
+            # Calculate distances between all router pairs in this cluster
+            distances = []
+            for i in range(len(cluster)):
+                for j in range(i + 1, len(cluster)):
+                    r1 = cluster[i]
+                    r2 = cluster[j]
+                    dist_m = haversine(r1['lat'], r1['lon'], r2['lat'], r2['lon'])
+                    distances.append({
+                        'router1': r1['name'],
+                        'router2': r2['name'],
+                        'distance_m': dist_m
+                    })
+            
+            # Store cluster data
+            cluster_data.append({
+                'size': len(cluster),
+                'best_router': best_router['name'],
+                'best_router_relays': best_router['relay_count'],
+                'other_routers': other_names,
+                'distances': distances
+            })
+            
+            # Construct message (kept for backward compatibility)
             msg = f"Topology: High Router Density! Found cluster of {len(cluster)} routers. "
             msg += f"Best positioned seems to be '{best_router['name']}' ({best_router['relay_count']} relays). "
             msg += f"Consider changing others to CLIENT: {', '.join(other_names)}."
             
             issues.append(msg)
 
-        return issues
+        return issues, cluster_data
+
 
     def check_signal_vs_distance(self, nodes, my_node):
         """

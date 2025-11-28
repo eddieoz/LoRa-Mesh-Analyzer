@@ -355,6 +355,7 @@ class MeshMonitor:
                         # logger.warning(f"Found {len(issues)} potential issues:")
                         # for issue in issues:
                         #     logger.warning(f"  - {issue}")
+                        pass
                     else:
                         logger.debug("No critical issues found in current scan.")
                     
@@ -374,7 +375,7 @@ class MeshMonitor:
                         # Calculate Router Stats for Report
                         router_stats = self.analyzer.get_router_stats(nodes, self.active_tester.test_results)
 
-                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [], local_node=local_node, router_stats=router_stats)
+                        self.reporter.generate_report(nodes, self.active_tester.test_results, issues if 'issues' in locals() else [], local_node=local_node, router_stats=router_stats, analyzer=self.analyzer)
                         
                         # Reset cycle count and results
                         self.active_tester.completed_cycles = 0
@@ -405,7 +406,7 @@ class MeshMonitor:
                     results = self.active_tester.test_results if self.active_tester else []
                     
                     router_stats = self.analyzer.get_router_stats(nodes, results)
-                    self.reporter.generate_report(nodes, results, issues if 'issues' in locals() else [], local_node=local_node, router_stats=router_stats)
+                    self.reporter.generate_report(nodes, results, issues if 'issues' in locals() else [], local_node=local_node, router_stats=router_stats, analyzer=self.analyzer)
                 
                 self.stop()
                 break

@@ -17,12 +17,22 @@ class NetworkReporter:
         # Ensure report directory exists
         os.makedirs(self.report_dir, exist_ok=True)
 
-    def generate_report(self, nodes, test_results, analysis_issues, local_node=None, router_stats=None):
+    def generate_report(self, nodes, test_results, analysis_issues, local_node=None, router_stats=None, analyzer=None, override_timestamp=None, override_location=None, save_json=True):
         """
         Generates a Markdown report based on collected data.
         Also persists all raw data to JSON format.
+        analyzer: NetworkHealthAnalyzer instance with cluster_data and ch_util_data
+        override_timestamp: Optional timestamp string to use (for regeneration)
+        override_location: Optional location string to use (for regeneration)
+        save_json: Whether to save the raw data to JSON (default: True)
         """
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if override_timestamp:
+            timestamp = override_timestamp
+            report_date = datetime.strptime(timestamp, "%Y%m%d-%H%M%S").strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            report_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
         filename = f"report-{timestamp}.md"
         json_filename = f"report-{timestamp}.json"
         filepath = os.path.join(self.report_dir, filename)
@@ -39,13 +49,19 @@ class NetworkReporter:
             with open(filepath, "w") as f:
                 # Header
                 f.write(f"# Meshtastic Network Report\n")
-                f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write(f"**Date:** {report_date}\n\n")
+
+                # Calculate location if not overridden
+                if override_location:
+                    test_location = override_location
+                else:
+                    test_location = self._get_location_string(nodes, local_node)
 
                 # 1. Executive Summary
-                self._write_executive_summary(f, nodes, test_results, analysis_issues, local_node)
+                self._write_executive_summary(f, nodes, test_results, analysis_issues, test_location)
 
                 # 2. Network Health (Analysis Findings)
-                self._write_network_health(f, analysis_issues)
+                self._write_network_health(f, analysis_issues, analyzer)
                 
                 # 2.1 Router Performance Table (New)
                 if router_stats:
@@ -58,25 +74,27 @@ class NetworkReporter:
                 self._write_traceroute_results(f, test_results, nodes, local_node)
 
                 # 5. Recommendations
-                self._write_recommendations(f, analysis_issues, test_results)
+                self._write_recommendations(f, analysis_issues, test_results, analyzer)
 
             logger.info(f"Report generated successfully: {filepath}")
             
             # --- Persist Raw Data to JSON ---
-            try:
-                self._save_json_data(
-                    json_filepath,
-                    timestamp,
-                    nodes,
-                    test_results,
-                    analysis_issues,
-                    local_node,
-                    router_stats,
-                    route_analysis
-                )
-                logger.info(f"Raw data saved to: {json_filepath}")
-            except Exception as json_e:
-                logger.error(f"Failed to save JSON data: {json_e}")
+            if save_json:
+                try:
+                    self._save_json_data(
+                        json_filepath,
+                        timestamp,
+                        nodes,
+                        test_results,
+                        analysis_issues,
+                        local_node,
+                        router_stats,
+                        route_analysis,
+                        test_location
+                    )
+                    logger.info(f"Raw data saved to: {json_filepath}")
+                except Exception as json_e:
+                    logger.error(f"Failed to save JSON data: {json_e}")
             
             return filepath
         except Exception as e:
@@ -123,7 +141,7 @@ class NetworkReporter:
             visited.discard(obj_id)
 
     def _save_json_data(self, filepath, timestamp, nodes, test_results, analysis_issues, 
-                        local_node, router_stats, route_analysis):
+                        local_node, router_stats, route_analysis, test_location):
         """
         Saves all raw data to JSON file with session metadata.
         """
@@ -142,6 +160,7 @@ class NetworkReporter:
             "session": {
                 "timestamp": timestamp,
                 "generated_at": datetime.now().isoformat(),
+                "test_location": test_location,
                 "config": self._serialize_object(self.config)
             },
             "data": {
@@ -158,7 +177,59 @@ class NetworkReporter:
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2, default=str)
 
-    def _write_executive_summary(self, f, nodes, test_results, analysis_issues, local_node=None):
+    def _get_location_string(self, nodes, local_node):
+        """
+        Determines the location string for the report.
+        """
+        local_pos_str = "Unknown"
+        if local_node:
+            # Try to get ID to look up in nodes dict (which has the most up-to-date position including manual overrides)
+            local_id = None
+            if hasattr(local_node, 'nodeNum'):
+                local_id = f"!{local_node.nodeNum:08x}"
+            elif isinstance(local_node, dict):
+                 # Try to find ID in dict
+                 if 'nodeNum' in local_node:
+                     try:
+                         local_id = f"!{int(local_node['nodeNum']):08x}"
+                     except:
+                         pass
+                 
+                 if not local_id:
+                     user = local_node.get('user', {})
+                     if 'id' in user:
+                         local_id = user['id']
+            
+            if local_id and local_id in nodes:
+                pos = get_val(nodes[local_id], 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                if lat is not None and lon is not None:
+                    local_pos_str = f"{lat:.4f}, {lon:.4f}"
+            
+            # Fallback to local_node object if not found in dict or no ID
+            if local_pos_str == "Unknown":
+                 if isinstance(local_node, dict):
+                     pos = local_node.get('position', {})
+                     lat = pos.get('latitude')
+                     lon = pos.get('longitude')
+                     if lat is not None and lon is not None:
+                         local_pos_str = f"{lat:.4f}, {lon:.4f}"
+                 elif hasattr(local_node, 'position'):
+                     # Check if it's a dict or object
+                     pos = local_node.position
+                     if isinstance(pos, dict):
+                         lat = pos.get('latitude')
+                         lon = pos.get('longitude')
+                     else:
+                         lat = getattr(pos, 'latitude', None)
+                         lon = getattr(pos, 'longitude', None)
+                     
+                     if lat is not None and lon is not None:
+                         local_pos_str = f"{lat:.4f}, {lon:.4f}"
+        return local_pos_str
+
+    def _write_executive_summary(self, f, nodes, test_results, analysis_issues, test_location="Unknown"):
         f.write("## 1. Executive Summary\n")
         
         total_nodes = len(nodes)
@@ -171,42 +242,7 @@ class NetworkReporter:
         # Get unique nodes from test results (selected online nodes)
         unique_tested_nodes = len(set([r.get('node_id') for r in test_results]))
         
-        # Get Local Position
-        local_pos_str = "Unknown"
-        if local_node:
-            # Try to get ID to look up in nodes dict (which has the most up-to-date position including manual overrides)
-            local_id = None
-            if hasattr(local_node, 'nodeNum'):
-                local_id = f"!{local_node.nodeNum:08x}"
-            elif isinstance(local_node, dict):
-                 # Try to find ID in dict
-                 user = local_node.get('user', {})
-                 if 'id' in user:
-                     local_id = user['id']
-            
-            if local_id and local_id in nodes:
-                pos = get_val(nodes[local_id], 'position', {})
-                lat = get_val(pos, 'latitude')
-                lon = get_val(pos, 'longitude')
-                if lat is not None and lon is not None:
-                    local_pos_str = f"{lat:.4f}, {lon:.4f}"
-            
-            # Fallback to local_node object if not found in dict or no ID
-            if local_pos_str == "Unknown":
-                 if hasattr(local_node, 'position'):
-                     # Check if it's a dict or object
-                     pos = local_node.position
-                     if isinstance(pos, dict):
-                         lat = pos.get('latitude')
-                         lon = pos.get('longitude')
-                     else:
-                         lat = getattr(pos, 'latitude', None)
-                         lon = getattr(pos, 'longitude', None)
-                     
-                     if lat is not None and lon is not None:
-                         local_pos_str = f"{lat:.4f}, {lon:.4f}"
-
-        f.write(f"- **Test Location:** {local_pos_str}\n")
+        f.write(f"- **Test Location:** {test_location}\n")
         f.write(f"- **Total Nodes Visible:** {total_nodes}\n")
         f.write(f"- **Selected Online Nodes:** {unique_tested_nodes}\n")
         f.write(f"- **Total Tests Performed:** {total_tests}\n")
@@ -259,7 +295,7 @@ class NetworkReporter:
         else:
             f.write("No path data available.\n\n")
 
-    def _write_network_health(self, f, analysis_issues):
+    def _write_network_health(self, f, analysis_issues, analyzer=None):
         f.write("## 2. Network Health Analysis\n")
         if not analysis_issues:
             f.write("No significant network issues detected.\n\n")
@@ -317,6 +353,18 @@ class NetworkReporter:
         if topology:
             f.write("### Topology & Placement\n")
             for i in topology: f.write(f"- {i}\n")
+            
+            # Add detailed cluster distance information
+            if analyzer and hasattr(analyzer, 'cluster_data') and analyzer.cluster_data:
+                f.write("\n**Router Cluster Details:**\n\n")
+                for cluster in analyzer.cluster_data:
+                    f.write(f"**Cluster of {cluster['size']} routers:**\n")
+                    f.write(f"  - Best positioned: {cluster['best_router']} ({cluster['best_router_relays']} relays)\n")
+                    f.write(f"  - Distances:\n")
+                    for dist_info in cluster['distances']:
+                        f.write(f"    - {dist_info['router1']} ↔ {dist_info['router2']}: {dist_info['distance_m']/1000:.2f}km\n")
+                    f.write("\n")
+            
             f.write("\n")
 
         if other:
@@ -451,74 +499,139 @@ class NetworkReporter:
             f.write(f"| {node_id} | {name} | {status_icon} {status} | {distance} | {rtt} | {hops} | {snr} |\n")
         f.write("\n")
 
-    def _write_recommendations(self, f, analysis_issues, test_results):
+    def _write_recommendations(self, f, analysis_issues, test_results, analyzer=None):
         f.write("## 4. Recommendations\n")
         
-        recs = []
+        recs = []  # Format: (priority, emoji, text)
         
-        # 1. Topology & Placement (Consolidated from Analysis)
-        # Extract "Best positioned..." recommendations
-        topology_recs = []
+        # === CRITICAL PRIORITY ===
+        
+        # 1.  Router Clusters <500m
         for issue in analysis_issues:
             if "Topology: High Router Density!" in issue:
                 # Extract the recommendation part
-                if "Best positioned seems to be" in issue:
-                    # Find where the recommendation starts
-                    start_idx = issue.find("Best positioned seems to be")
-                    if start_idx != -1:
-                        topology_recs.append(f"- **Optimize Cluster:** {issue[start_idx:]}")
+                if analyzer and hasattr(analyzer, 'cluster_data') and analyzer.cluster_data:
+                    # Get threshold from config (default to 2000m if not available)
+                    threshold = self.config.get('thresholds', {}).get('router_density_threshold', 2000)
+                    
+                    for cluster in analyzer.cluster_data:
+                        # Check if any distance is less than threshold (CRITICAL)
+                        min_distance = min((d['distance_m'] for d in cluster['distances']), default=threshold)
+                        has_close_routers = min_distance < threshold
+                        
+                        if has_close_routers:
+                            rec = f"**Router Cluster:** {cluster['size']} routers within {threshold/1000:.1f}km threshold (closest: {min_distance/1000:.2f}km). "
+                            rec += f"Best positioned: '{cluster['best_router']}' ({cluster['best_router_relays']} relays). "
+                            rec += f"Consider changing others ({', '.join(cluster['other_routers'])}) to CLIENT role."
+                            recs.append((1, "🔴", rec))
+                        else:
+                            rec = f"**Router Cluster:** {cluster['size']} routers detected. "
+                            rec += f"Best positioned: '{cluster['best_router']}' ({cluster['best_router_relays']} relays). "
+                            rec += f"Review if all routers are needed: {', '.join(cluster['other_routers'])}."
+                            recs.append((2, "🟡", rec))
                 else:
-                    # Fallback if format is different
-                    topology_recs.append(f"- **Optimize Placement:** {issue}")
-            elif "Topology: Node" in issue and "hops away" in issue:
-                 # "Topology: Node 'X' is 4 hops away."
-                 topology_recs.append(f"- **Improve Coverage:** {issue.replace('Topology: ', '')}")
-
-        if topology_recs:
-            recs.extend(topology_recs)
-        elif any("High Density" in i for i in analysis_issues):
-             # Fallback for generic density issue if not caught above
-             recs.append("- **Optimize Placement:** Routers are too close together. Convert redundant routers to clients.")
-
-        # 2. Efficiency (Router Performance)
-        if any("Ineffective" in i for i in analysis_issues):
-            recs.append("- **Review Ineffective Routers:** Some routers have neighbors but aren't relaying packets. Consider repositioning them or checking their antenna/LOS.")
+                    # Fallback if no analyzer data
+                    rec = "**Optimize Placement:** Routers are too close together. Convert redundant routers to clients."
+                    recs.append((1, "🔴", rec))
         
+        # 2. Channel Utilization (Mesh-Wide or Isolated)
+        if analyzer and hasattr(analyzer, 'ch_util_data') and analyzer.ch_util_data['type'] != 'none':
+            ch_data = analyzer.ch_util_data
+            if ch_data['type'] == 'widespread':
+                # CRITICAL: Mesh-wide congestion
+                rec = f"**Mesh-Wide Congestion:** {ch_data['affected_count']} out of {ch_data['active_count']} active nodes have high channel utilization (>{self.config.get('thresholds', {}).get('channel_utilization', 25)}%). "
+                rec += "Consider switching to a faster Meshtastic preset (e.g., LONG_FAST → MEDIUM_FAST or SHORT_FAST). "
+                rec += "Note: Faster presets increase throughput but reduce range. Choose based on your deployment area."
+                recs.append((1, "🔴", rec))
+            else:
+                # WARNING: Isolated congestion
+                rec = "**High Channel Utilization** on specific nodes:\n"
+                for node in ch_data['nodes'][:5]:  # Top 5
+                    rec += f"\n  - {node['name']}: {node['util_pct']:.1f}%"
+                rec += "\n\nCheck these nodes for message spamming or reduce their broadcast frequency."
+                recs.append((2, "🟡", rec))
+        elif any("Congestion" in i or "Congested" in i for i in analysis_issues):
+            # Fallback if no analyzer data
+            recs.append((2, "🟡", "**Reduce Traffic:** High channel utilization detected. Identify spamming nodes, reduce broadcast frequency, or optimize network preset."))
+        
+        # 3. Ineffective Routers (clients relaying more than routers)
+        ineffective_issues = [i for i in analysis_issues if "Router may be ineffective" in i]
+        if ineffective_issues:
+            for issue in ineffective_issues:
+                # Parse the issue to extract router name and ChUtil
+                import re
+                router_match = re.search(r"Router '([^']+)' has (\d+) relays", issue)
+                ch_util_match = re.search(r"Router ChUtil: ([\d.]+)%", issue)
+                client_match = re.search(r"client '([^']+)' \([^)]+\) has (\d+) relays", issue)
+                
+                if router_match and ch_util_match and client_match:
+                    router_name = router_match.group(1)
+                    router_relays = int(router_match.group(2))
+                    router_ch_util = float(ch_util_match.group(1))
+                    client_name = client_match.group(1)
+                    client_relays = int(client_match.group(2))
+                    
+                    # Detect mesh-clogging scenario: low relays + high ChUtil
+                    ch_util_threshold = self.config.get('thresholds', {}).get('channel_utilization', 25.0)
+                    is_mesh_clogger = (router_relays < client_relays / 2) and (router_ch_util > ch_util_threshold)
+                    
+                    if is_mesh_clogger:
+                        # CRITICAL: Router is clogging the mesh
+                        rec = f"**Mesh-Clogger Router:** '{router_name}' has high channel utilization ({router_ch_util:.1f}%) but low relay activity ({router_relays} relays), "
+                        rec += f"while nearby client '{client_name}' is doing more work ({client_relays} relays). "
+                        rec += f"This router is likely clogging the mesh. **Strongly recommend changing '{router_name}' to CLIENT role**."
+                        recs.append((1, "🔴", rec))
+                    else:
+                        # WARNING: Ineffective but not clogging -> Now CRITICAL as per user request
+                        rec = f"**Ineffective Router:** '{router_name}' has {router_relays} relays (ChUtil: {router_ch_util:.1f}%), "
+                        rec += f"but nearby client '{client_name}' has {client_relays} relays. "
+                        rec += f"Consider changing '{router_name}' to CLIENT role or check its antenna/placement."
+                        recs.append((1, "🔴", rec))
+                else:
+                    # Fallback if parsing fails
+                    rec = issue.replace("Efficiency: ", "").replace("Router may be ineffective - check antenna, placement, or configuration.", "Consider changing the router to CLIENT role or check its antenna/placement/configuration.")
+                    recs.append((1, "🔴", rec))
+        
+        # === WARNING PRIORITY ===
+        
+        # 4. Long Paths
+        if any("Long path" in i for i in analysis_issues):
+            recs.append((2, "🟡", "**Optimize Paths:** Long paths (>3 hops) detected. Consider adding a strategically placed relay to shorten the path."))
+        
+        # 5. Redundant Routers (not close <500m but still redundant)
         if any("Redundant" in i for i in analysis_issues):
-             # This might overlap with Topology, but good to have specific advice
-             recs.append("- **Reduce Redundancy:** Routers marked as 'Redundant' have too many other routers nearby. Change their role to CLIENT to save airtime.")
-
-        # 3. Congestion
-        if any("Congestion" in i or "Congested" in i for i in analysis_issues):
-            recs.append("- **Reduce Traffic:** High channel utilization detected. Identify spamming nodes, reduce broadcast frequency, or increase channel speed (if possible).")
-
-        # 4. Configuration
+            recs.append((2, "🟡", "**Reduce Redundancy:** Some routers have too many other routers nearby. Evaluate if all are necessary and consider changing some to CLIENT role to save airtime."))
+        
+        # === INFO PRIORITY ===
+        
+        # 6. Configuration
         if any("ROUTER_CLIENT" in i for i in analysis_issues):
-            recs.append("- **Fix Roles:** Deprecated `ROUTER_CLIENT` role detected. Change these nodes to `CLIENT` or `CLIENT_MUTE`.")
+            recs.append((3, "🟢", "**Fix Roles:** Deprecated `ROUTER_CLIENT` role detected. Change these nodes to `CLIENT` or `CLIENT_MUTE`."))
         
         if any("Network Size" in i for i in analysis_issues):
-            recs.append("- **Adjust Presets:** Network size exceeds recommendations for the current estimated preset. Consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST).")
-
-        # 5. Route Quality / Signal
+            recs.append((3, "🟢", "**Adjust Presets:** Network size exceeds recommendations for LONG_FAST preset. Consider switching to a faster preset (e.g., LONG_MODERATE or SHORT_FAST) to reduce collision probability."))
+        
+        # 7. Signal Quality
         if any("poor SNR" in i or "Weak signal" in i for i in analysis_issues):
-            recs.append("- **Check Hardware/LOS:** Nodes with poor SNR or weak signals may have antenna issues, bad placement, or obstructions.")
-            
-        if any("Long path" in i for i in analysis_issues):
-            recs.append("- **Optimize Paths:** Long paths (>3 hops) detected. Consider adding a strategically placed relay to shorten the path.")
-            
+            recs.append((3, "🟢", "**Check Hardware/LOS:** Nodes with poor SNR or weak signals may have antenna issues, bad placement, or obstructions."))
+        
         if any("Favorite Router" in i for i in analysis_issues):
-            recs.append("- **Check Favorites:** Routes are using 'Favorite Router' nodes. Ensure this is intentional, as it forces specific paths.")
-
-        # 6. Connectivity (Traceroute Failures)
+            recs.append((3, "🟢", "**Check Favorites:** Routes are using 'Favorite Router' nodes. Ensure this is intentional, as it forces specific paths."))
+        
+        # 8. Connectivity
         failures = [r for r in test_results if r.get('status') != 'success']
         if failures:
-            recs.append(f"- **Investigate Connectivity:** {len(failures)} nodes failed traceroute tests. Check if they are online or if the path is broken.")
-
+            recs.append((3, "🟢", f"**Investigate Connectivity:** {len(failures)} nodes failed traceroute tests. Check if they are online or if the path is broken."))
+        
+        # Sort by priority (1=CRITICAL first)
+        recs.sort(key=lambda x: x[0])
+        
         if not recs:
             f.write("Network looks healthy! Keep up the good work.\n")
         else:
-            # Deduplicate recommendations
-            unique_recs = sorted(list(set(recs)))
-            for r in unique_recs:
-                f.write(f"{r}\n")
+            for priority, emoji, rec_text in recs:
+                f.write(f"{emoji} {rec_text}\n\n")
+        
         f.write("\n")
+
+
