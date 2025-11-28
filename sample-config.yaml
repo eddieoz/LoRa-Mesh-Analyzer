@@ -12,7 +12,7 @@ log_level: info
 
 # Auto-Discovery Settings (Used if priority_nodes is empty)
 # Analysis Mode: 'distance' (default) or 'router_clusters'
-analysis_mode: distance
+analysis_mode: router_clusters
 
 # Radius for router cluster analysis (nodes close to routers in meters). 
 # Only used if analysis_mode is 'router_clusters'
