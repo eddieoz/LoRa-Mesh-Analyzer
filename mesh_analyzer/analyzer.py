@@ -252,7 +252,7 @@ class NetworkHealthAnalyzer:
         
         for node_id, node in nodes.items():
             # Check if node is active
-            last_heard = get_val(node, 'lastHeard', 0)
+            last_heard = get_val(node, 'lastHeard', 0) or 0
             if current_time - last_heard < self.active_threshold_seconds:
                 active_node_count += 1
             else:
@@ -483,7 +483,7 @@ class NetworkHealthAnalyzer:
         active_nodes = 0
         
         for node in nodes.values():
-            last_heard = get_val(node, 'lastHeard', 0)
+            last_heard = get_val(node, 'lastHeard', 0) or 0
             # Some nodes might use 'last_heard' or other keys, but standard is usually lastHeard in the node dict
             # If it's 0, it might be very old or unknown.
             
