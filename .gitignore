@@ -18,5 +18,7 @@ venv.bak/
 # Local Config
 config.yaml
 report-*.md
+report-*.json
+reports/
 GEMINI.md
 CLAUDE.md
