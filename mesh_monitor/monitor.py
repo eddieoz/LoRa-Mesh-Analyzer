@@ -352,7 +352,7 @@ class MeshMonitor:
                     
                     # Report Issues
                     if issues:
-                        logger.warning(f"Found {len(issues)} potential issues:")
+                        # logger.warning(f"Found {len(issues)} potential issues:")
                         # for issue in issues:
                         #     logger.warning(f"  - {issue}")
                     else:
