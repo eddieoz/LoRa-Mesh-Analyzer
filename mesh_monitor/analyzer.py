@@ -125,9 +125,10 @@ class NetworkHealthAnalyzer:
 
         # 2. Analyze Each Router
         for r in routers:
-            # A. Neighbors (2km)
+            # A. Neighbors (within configured radius)
             nearby_routers = 0
             total_neighbors = 0
+            radius = self.router_density_threshold
             
             for node_id, node in nodes.items():
                 if node_id == r['id']: continue
@@ -137,7 +138,7 @@ class NetworkHealthAnalyzer:
                 
                 if lat and lon:
                     dist = haversine(r['lat'], r['lon'], lat, lon)
-                    if dist < 2000:
+                    if dist < radius:
                         total_neighbors += 1
                         # Check if it's also a router
                         # (Simplified check, ideally we'd check against the routers list but this is O(N))
@@ -181,8 +182,9 @@ class NetworkHealthAnalyzer:
                 'lat': r['lat'],
                 'lon': r['lon'],
                 'role': r['role'],
-                'neighbors_2km': total_neighbors,
-                'routers_2km': nearby_routers,
+                'neighbors': total_neighbors,
+                'routers_nearby': nearby_routers,
+                'radius': radius,
                 'ch_util': ch_util,
                 'relay_count': relay_count,
                 'status': ", ".join(status_issues) if status_issues else "OK"

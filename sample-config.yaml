@@ -1,8 +1,10 @@
 # Configuration for Meshtastic Network Monitor
 
-# List of Node IDs to prioritize for active testing (Traceroute, etc.)
-# Format: "!<NodeID>"
-priority_nodes:
+# # List of Node IDs to prioritize for active testing (Traceroute, etc.)
+# # If priority nodes is enabled, then only those nodes will be tested. 
+# # If this session is disabled, then auto discovery will run automatically
+# # Format: "!<NodeID>"
+# priority_nodes:
   # - "!12345678" 
 
 # Logging Level [warn|info|debug]
@@ -12,7 +14,8 @@ log_level: info
 # Analysis Mode: 'distance' (default) or 'router_clusters'
 analysis_mode: distance
 
-# Radius for router cluster analysis (in meters)
+# Radius for router cluster analysis (nodes close to routers in meters). 
+# Only used if analysis_mode is 'router_clusters'
 cluster_radius: 2000
 
 # Roles to prioritize for auto-discovery
@@ -50,6 +53,7 @@ thresholds:
   channel_utilization: 25.0 # Percent
   air_util_tx: 7.0 # Percent
   router_density_threshold: 2000 # Meters (Minimum distance between routers)
+  active_threshold_seconds: 7200 # 2 Hours (Nodes seen within this time are considered active)
 
 # Network Size Settings
 max_nodes_for_long_fast: 60

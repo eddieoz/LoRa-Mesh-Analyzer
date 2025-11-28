@@ -164,6 +164,24 @@ class NetworkReporter:
             f.write("No significant network issues detected.\n\n")
             return
 
+        # Helper to clean issue strings (remove recommendations)
+        def clean_issue(issue):
+            # Topology: High Router Density
+            if "Best positioned seems to be" in issue:
+                return issue.split("Best positioned seems to be")[0].strip()
+            if "Consider changing" in issue:
+                return issue.split("Consider changing")[0].strip()
+            
+            # Network Size
+            if "If using" in issue:
+                return issue.split("If using")[0].strip()
+            
+            # Efficiency
+            if "Consolidate?" in issue:
+                return issue.split("Consolidate?")[0].strip()
+                
+            return issue
+
         # Group issues by type
         congestion = []
         config = []
@@ -171,16 +189,19 @@ class NetworkReporter:
         other = []
 
         for issue in analysis_issues:
+            # Clean the issue string first
+            cleaned_issue = clean_issue(issue)
+            
             if "Congestion" in issue or "Spam" in issue:
-                congestion.append(issue)
+                congestion.append(cleaned_issue)
             elif "Config" in issue or "Role" in issue:
-                config.append(issue)
+                config.append(cleaned_issue)
             elif "Topology" in issue or "Density" in issue or "hops away" in issue:
-                topology.append(issue)
+                topology.append(cleaned_issue)
             elif "Efficiency" in issue or "Route Quality" in issue:
                 pass # Handled in separate sections
             else:
-                other.append(issue)
+                other.append(cleaned_issue)
 
         if congestion:
             f.write("### Congestion & Airtime\n")
@@ -203,7 +224,7 @@ class NetworkReporter:
             f.write("\n")
 
         # Separate section for Efficiency
-        efficiency = [i for i in analysis_issues if "Efficiency" in i]
+        efficiency = [clean_issue(i) for i in analysis_issues if "Efficiency" in i]
         if efficiency:
             f.write("### Router Efficiency Analysis\n")
             f.write("Analysis of router placement, congestion, and relay performance.\n\n")
@@ -213,7 +234,7 @@ class NetworkReporter:
             f.write("\n")
 
         # Separate section for Route Quality
-        quality = [i for i in analysis_issues if "Route Quality" in i]
+        quality = [clean_issue(i) for i in analysis_issues if "Route Quality" in i]
         if quality:
             f.write("### Route Quality Analysis\n")
             f.write("Analysis of path efficiency and stability.\n\n")
@@ -228,11 +249,19 @@ class NetworkReporter:
             f.write("No routers found.\n\n")
             return
 
-        f.write("| Name | Role | Neighbors (2km) | Routers (2km) | ChUtil | Relayed | Status |\n")
+        # Get radius from first stat entry (default to 2000m if missing)
+        radius_m = router_stats[0].get('radius', 2000)
+        radius_km = radius_m / 1000.0
+
+        f.write(f"| Name | Role | Neighbors ({radius_km:.1f}km) | Routers ({radius_km:.1f}km) | ChUtil | Relayed | Status |\n")
         f.write("|---|---|---|---|---|---|---|\n")
         
         for s in router_stats:
-            f.write(f"| {s['name']} | {s['role']} | {s['neighbors_2km']} | {s['routers_2km']} | {s['ch_util']:.1f}% | {s['relay_count']} | {s['status']} |\n")
+            # Handle backward compatibility if keys are missing
+            neighbors = s.get('neighbors', s.get('neighbors_2km', 0))
+            routers_nearby = s.get('routers_nearby', s.get('routers_2km', 0))
+            
+            f.write(f"| {s['name']} | {s['role']} | {neighbors} | {routers_nearby} | {s['ch_util']:.1f}% | {s['relay_count']} | {s['status']} |\n")
         f.write("\n")
 
 
@@ -347,22 +376,36 @@ class NetworkReporter:
              # Fallback for generic density issue if not caught above
              recs.append("- **Optimize Placement:** Routers are too close together. Convert redundant routers to clients.")
 
-        # 2. Congestion
-        if any("Congestion" in i for i in analysis_issues):
-            recs.append("- **Reduce Traffic:** High channel utilization detected. Identify spamming nodes or reduce broadcast frequency.")
+        # 2. Efficiency (Router Performance)
+        if any("Ineffective" in i for i in analysis_issues):
+            recs.append("- **Review Ineffective Routers:** Some routers have neighbors but aren't relaying packets. Consider repositioning them or checking their antenna/LOS.")
+        
+        if any("Redundant" in i for i in analysis_issues):
+             # This might overlap with Topology, but good to have specific advice
+             recs.append("- **Reduce Redundancy:** Routers marked as 'Redundant' have too many other routers nearby. Change their role to CLIENT to save airtime.")
 
-        # 3. Configuration
+        # 3. Congestion
+        if any("Congestion" in i or "Congested" in i for i in analysis_issues):
+            recs.append("- **Reduce Traffic:** High channel utilization detected. Identify spamming nodes, reduce broadcast frequency, or increase channel speed (if possible).")
+
+        # 4. Configuration
         if any("ROUTER_CLIENT" in i for i in analysis_issues):
             recs.append("- **Fix Roles:** Deprecated `ROUTER_CLIENT` role detected. Change these nodes to `CLIENT` or `CLIENT_MUTE`.")
         
         if any("Network Size" in i for i in analysis_issues):
             recs.append("- **Adjust Presets:** Network size exceeds recommendations for the current estimated preset. Consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST).")
 
-        # 4. Hardware / Signal
-        if any("poor SNR" in i for i in analysis_issues):
-            recs.append("- **Check Hardware:** Nodes with poor SNR at close range may have antenna issues or bad placement.")
+        # 5. Route Quality / Signal
+        if any("poor SNR" in i or "Weak signal" in i for i in analysis_issues):
+            recs.append("- **Check Hardware/LOS:** Nodes with poor SNR or weak signals may have antenna issues, bad placement, or obstructions.")
+            
+        if any("Long path" in i for i in analysis_issues):
+            recs.append("- **Optimize Paths:** Long paths (>3 hops) detected. Consider adding a strategically placed relay to shorten the path.")
+            
+        if any("Favorite Router" in i for i in analysis_issues):
+            recs.append("- **Check Favorites:** Routes are using 'Favorite Router' nodes. Ensure this is intentional, as it forces specific paths.")
 
-        # 5. Connectivity (Traceroute Failures)
+        # 6. Connectivity (Traceroute Failures)
         failures = [r for r in test_results if r.get('status') != 'success']
         if failures:
             recs.append(f"- **Investigate Connectivity:** {len(failures)} nodes failed traceroute tests. Check if they are online or if the path is broken.")
@@ -370,6 +413,8 @@ class NetworkReporter:
         if not recs:
             f.write("Network looks healthy! Keep up the good work.\n")
         else:
-            for r in recs:
+            # Deduplicate recommendations
+            unique_recs = sorted(list(set(recs)))
+            for r in unique_recs:
                 f.write(f"{r}\n")
         f.write("\n")
