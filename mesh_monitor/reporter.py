@@ -295,7 +295,10 @@ class NetworkReporter:
             recs.append("- **Fix Roles:** Deprecated `ROUTER_CLIENT` role detected. Change these nodes to `CLIENT` or `CLIENT_MUTE`.")
             
         if any("High Density" in i for i in analysis_issues):
-            recs.append("- **Optimize Placement:** Routers are too close together. Convert redundant routers to clients to reduce noise.")
+            recs.append("- **Optimize Placement:** Routers are too close together (exceeding configured density threshold). Convert redundant routers to clients to reduce noise.")
+
+        if any("Network Size" in i for i in analysis_issues):
+            recs.append("- **Adjust Presets:** Network size exceeds recommendations for the current estimated preset. Consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST).")
             
         if any("poor SNR" in i for i in analysis_issues):
             recs.append("- **Check Hardware:** Nodes with poor SNR at close range may have antenna issues or bad placement.")

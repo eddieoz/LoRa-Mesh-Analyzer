@@ -24,7 +24,8 @@ class MeshMonitor:
         self.interface = None
         self.interface_type = interface_type
         self.hostname = hostname
-        self.analyzer = NetworkHealthAnalyzer(ignore_no_position=ignore_no_position)
+        self.config = self.load_config(config_file)
+        self.analyzer = NetworkHealthAnalyzer(config=self.config, ignore_no_position=ignore_no_position)
         self.reporter = NetworkReporter()
         self.active_tester = None 
         self.running = False

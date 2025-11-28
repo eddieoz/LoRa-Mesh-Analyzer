@@ -18,7 +18,8 @@ The monitor runs a continuous loop (every 60 seconds) and performs the following
     *   **Placement Verification**: Flags `ROUTER` or `REPEATER` nodes that do not have a valid GPS position.
 
     *   **Placement Verification**: Flags `ROUTER` or `REPEATER` nodes that do not have a valid GPS position.
-    *   **Router Density**: Flags `ROUTER` nodes that are physically too close (< 500m) to each other, indicating redundancy.
+    *   **Router Density**: Flags `ROUTER` nodes that are physically too close (default < 2km) to each other, indicating redundancy.
+*   **Network Size**: Warns if the network size exceeds the recommendation for the current preset (e.g. > 60 nodes for LONG_FAST).
 
 ### 2. Auto-Discovery of Targets
 If `priority_nodes` is empty in `config.yaml`, the monitor will automatically select targets based on:
@@ -93,6 +94,15 @@ traceroute_timeout: 90
 
 # Minimum interval between tests (in seconds)
 active_test_interval: 30
+
+# Thresholds for Analysis
+thresholds:
+  channel_utilization: 25.0 # Percent
+  air_util_tx: 7.0 # Percent
+  router_density_threshold: 2000 # Meters (Minimum distance between routers)
+
+# Network Size Settings
+max_nodes_for_long_fast: 60
 ```
 
 The monitor will cycle through these nodes and send traceroute requests to them.

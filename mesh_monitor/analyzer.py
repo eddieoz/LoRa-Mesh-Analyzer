@@ -5,10 +5,16 @@ from .utils import get_val, haversine, get_node_name
 logger = logging.getLogger(__name__)
 
 class NetworkHealthAnalyzer:
-    def __init__(self, ignore_no_position=False):
-        self.ch_util_threshold = 25.0
-        self.air_util_threshold = 10.0
+    def __init__(self, config=None, ignore_no_position=False):
+        self.config = config or {}
         self.ignore_no_position = ignore_no_position
+        
+        # Load thresholds from config or use defaults
+        thresholds = self.config.get('thresholds', {})
+        self.ch_util_threshold = thresholds.get('channel_utilization', 25.0)
+        self.air_util_threshold = thresholds.get('air_util_tx', 7.0) # Updated default to 7%
+        self.router_density_threshold = thresholds.get('router_density_threshold', 2000)
+        self.max_nodes_long_fast = self.config.get('max_nodes_for_long_fast', 60)
 
     def analyze(self, nodes, packet_history=None, my_node=None):
         """
@@ -34,7 +40,7 @@ class NetworkHealthAnalyzer:
             # 2. Check Airtime Usage
             air_util = get_val(metrics, 'airUtilTx', 0)
             if air_util > self.air_util_threshold:
-                issues.append(f"Spam: Node '{node_name}' AirUtilTx {air_util:.1f}% (Threshold: {self.air_util_threshold}%)")
+                issues.append(f"Congestion: Node '{node_name}' AirUtilTx {air_util:.1f}% (Threshold: {self.air_util_threshold}%)")
 
             # 3. Check Roles
             role = get_val(user, 'role', 'CLIENT')
@@ -74,6 +80,7 @@ class NetworkHealthAnalyzer:
 
         # --- Geospatial Analysis ---
         issues.extend(self.check_router_density(nodes))
+        issues.extend(self.check_network_size_and_preset(nodes))
         if my_node:
             issues.extend(self.check_signal_vs_distance(nodes, my_node))
 
@@ -310,6 +317,72 @@ class NetworkHealthAnalyzer:
                 if dist > 0 and dist < 500: # 500 meters threshold
                     issues.append(f"Topology: High Density! Routers '{r1['name']}' and '{r2['name']}' are only {dist:.0f}m apart. Consider changing one to CLIENT.")
         
+        return issues
+
+    def check_network_size_and_preset(self, nodes):
+        """
+        Checks if network size exceeds recommendations for the current preset.
+        Note: We can't easily know the *current* preset of the network just from node DB,
+        but we can warn based on size.
+        """
+        issues = []
+        total_nodes = len(nodes)
+        
+        if total_nodes > self.max_nodes_long_fast:
+             issues.append(f"Network Size: {total_nodes} nodes detected. If using LONG_FAST, consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST) to reduce collision probability.")
+             
+        return issues
+
+    def check_router_density(self, nodes):
+        """
+        Checks for high density of routers.
+        New Logic: Check for > 2 routers within 2km radius of each other.
+        """
+        issues = []
+        routers = []
+        
+        # Filter for routers with valid position
+        for node_id, node in nodes.items():
+            user = get_val(node, 'user', {})
+            role = get_val(user, 'role')
+            
+            is_router = False
+            if isinstance(role, int):
+                if role in [2, 3, 4, 9]: # ROUTER, ROUTER_CLIENT, REPEATER, ROUTER_LATE
+                    is_router = True
+            elif role in ['ROUTER', 'REPEATER', 'ROUTER_CLIENT', 'ROUTER_LATE']:
+                is_router = True
+            
+            pos = get_val(node, 'position', {})
+            lat = get_val(pos, 'latitude')
+            lon = get_val(pos, 'longitude')
+            
+            if is_router and lat is not None and lon is not None:
+                routers.append({
+                    'id': node_id,
+                    'name': get_node_name(node, node_id),
+                    'lat': lat,
+                    'lon': lon
+                })
+        
+        # Check density for each router
+        reported_pairs = set()
+        
+        for i, r1 in enumerate(routers):
+            nearby_routers = []
+            for j, r2 in enumerate(routers):
+                if i == j: continue
+                
+                dist = haversine(r1['lat'], r1['lon'], r2['lat'], r2['lon'])
+                if dist < self.router_density_threshold: 
+                    nearby_routers.append(r2)
+            
+            if len(nearby_routers) >= 1:
+                # Construct a unique key for this cluster to avoid duplicate messages
+                # (Simple approach: just report for the center node)
+                names = [r['name'] for r in nearby_routers]
+                issues.append(f"Topology: High Router Density! '{r1['name']}' has {len(nearby_routers)} other routers within {self.router_density_threshold}m ({', '.join(names)}). Consider changing some to CLIENT.")
+
         return issues
 
     def check_signal_vs_distance(self, nodes, my_node):
