@@ -127,8 +127,8 @@ class TestRouterEfficiency(unittest.TestCase):
         self.assertEqual(len(stats), 4) # StatsRouter + 3 neighbors
         
         target = next(s for s in stats if s['id'] == '!77777777')
-        self.assertEqual(target['neighbors_2km'], 3)
-        self.assertEqual(target['routers_2km'], 3)
+        self.assertEqual(target['neighbors'], 3)
+        self.assertEqual(target['routers_nearby'], 3)
         self.assertEqual(target['ch_util'], 25.0)
         self.assertEqual(target['relay_count'], 1) # Should be 1 now
         self.assertIn('Redundant', target['status'])

@@ -371,14 +371,15 @@ class ActiveTester:
             except Exception as e:
                 logger.debug(f"Could not parse RouteDiscovery protobuf: {e}")
         
-        # 3. Fallback: Old dict keys
+        # 3. Fallback: Old dict keys (only if not already parsed)
         if not route:
             route = decoded.get('route', [])
+        if not route_back:
             route_back = decoded.get('routeBack', [])
         
-        # Count hops (number of nodes in route - 1, excluding source)
-        hops_to = len(route) - 1 if route and len(route) > 0 else 0
-        hops_back = len(route_back) - 1 if route_back and len(route_back) > 0 else 0
+        # Count hops (intermediate relay nodes only, route excludes source and destination)
+        hops_to = len(route) if route else 0
+        hops_back = len(route_back) if route_back else 0
         
         # Convert route node numbers to hex IDs for logging
         route_ids = [f"!{node:08x}" if isinstance(node, int) else str(node) for node in route]
