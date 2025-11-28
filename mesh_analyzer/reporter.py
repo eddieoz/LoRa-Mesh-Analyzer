@@ -59,6 +59,10 @@ class NetworkReporter:
         route_analyzer = RouteAnalyzer(nodes)
         route_analysis = route_analyzer.analyze_routes(test_results)
 
+        # Generate Recommendations first to get the critical count
+        recommendations = self._generate_recommendations(analysis_issues, test_results, analyzer)
+        critical_count = len([r for r in recommendations if r[0] == 1])
+
         try:
             # --- Generate Report Content ---
             # We build the markdown content in memory first
@@ -75,7 +79,7 @@ class NetworkReporter:
                 test_location = self._get_location_string(nodes, local_node)
 
             # 1. Executive Summary
-            self._write_executive_summary(f, nodes, test_results, analysis_issues, test_location)
+            self._write_executive_summary(f, nodes, test_results, analysis_issues, test_location, critical_count)
 
             # 2. Network Health (Analysis Findings)
             self._write_network_health(f, analysis_issues, analyzer)
@@ -91,7 +95,7 @@ class NetworkReporter:
             self._write_traceroute_results(f, test_results, nodes, local_node)
 
             # 5. Recommendations
-            self._write_recommendations(f, analysis_issues, test_results, analyzer)
+            self._write_recommendations(f, recommendations)
             
             # Get the full markdown content
             markdown_content = f.getvalue()
@@ -292,15 +296,13 @@ class NetworkReporter:
                          local_pos_str = f"{lat:.4f}, {lon:.4f}"
         return local_pos_str
 
-    def _write_executive_summary(self, f, nodes, test_results, analysis_issues, test_location="Unknown"):
+    def _write_executive_summary(self, f, nodes, test_results, analysis_issues, test_location="Unknown", critical_count=0):
         f.write("## 1. Executive Summary\n")
         
         total_nodes = len(nodes)
         total_tests = len(test_results)
         successful_tests = len([r for r in test_results if r.get('status') == 'success'])
         success_rate = (successful_tests / total_tests * 100) if total_tests > 0 else 0
-        
-        critical_issues = len([i for i in analysis_issues if "Critical" in i or "Congestion" in i])
         
         # Get unique nodes from test results (selected online nodes)
         unique_tested_nodes = len(set([r.get('node_id') for r in test_results]))
@@ -310,7 +312,7 @@ class NetworkReporter:
         f.write(f"- **Selected Online Nodes:** {unique_tested_nodes}\n")
         f.write(f"- **Total Tests Performed:** {total_tests}\n")
         f.write(f"- **Test Success Rate:** {success_rate:.1f}%\n")
-        f.write(f"- **Critical Issues Found:** {critical_issues}\n\n")
+        f.write(f"- **Critical Issues Found:** {critical_count}\n\n")
 
     def _write_route_analysis(self, f, analysis):
         f.write("## 3. Route Analysis\n")
@@ -562,9 +564,12 @@ class NetworkReporter:
             f.write(f"| {node_id} | {name} | {status_icon} {status} | {distance} | {rtt} | {hops} | {snr} |\n")
         f.write("\n")
 
-    def _write_recommendations(self, f, analysis_issues, test_results, analyzer=None):
-        f.write("## 4. Recommendations\n")
-        
+    def _generate_recommendations(self, analysis_issues, test_results, analyzer=None):
+        """
+        Generates a list of recommendations based on analysis data.
+        Returns a list of tuples: (priority, emoji, text)
+        Priority: 1=CRITICAL, 2=WARNING, 3=INFO
+        """
         recs = []  # Format: (priority, emoji, text)
         
         # === CRITICAL PRIORITY ===
@@ -688,11 +693,15 @@ class NetworkReporter:
         
         # Sort by priority (1=CRITICAL first)
         recs.sort(key=lambda x: x[0])
+        return recs
+
+    def _write_recommendations(self, f, recommendations):
+        f.write("## 4. Recommendations\n")
         
-        if not recs:
+        if not recommendations:
             f.write("Network looks healthy! Keep up the good work.\n")
         else:
-            for priority, emoji, rec_text in recs:
+            for priority, emoji, rec_text in recommendations:
                 f.write(f"{emoji} {rec_text}\n\n")
         
         f.write("\n")
