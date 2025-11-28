@@ -19,6 +19,6 @@ venv.bak/
 config.yaml
 report-*.md
 report-*.json
-reports/
+report-*.html
 GEMINI.md
 CLAUDE.md

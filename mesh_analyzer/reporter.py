@@ -17,14 +17,22 @@ class NetworkReporter:
         # Ensure report directory exists
         os.makedirs(self.report_dir, exist_ok=True)
 
-    def generate_report(self, nodes, test_results, analysis_issues, local_node=None, router_stats=None, analyzer=None, override_timestamp=None, override_location=None, save_json=True):
+    def generate_report(self, nodes: dict, test_results: list, analysis_issues: list, local_node: dict = None, router_stats: list = None, analyzer: object = None, override_timestamp: str = None, override_location: str = None, save_json: bool = True, output_filename: str = None) -> str:
         """
         Generates a Markdown report based on collected data.
         Also persists all raw data to JSON format.
-        analyzer: NetworkHealthAnalyzer instance with cluster_data and ch_util_data
-        override_timestamp: Optional timestamp string to use (for regeneration)
-        override_location: Optional location string to use (for regeneration)
-        save_json: Whether to save the raw data to JSON (default: True)
+        
+        Args:
+            nodes: Dictionary of nodes
+            test_results: List of test results
+            analysis_issues: List of analysis issue strings
+            local_node: Local node information
+            router_stats: Router statistics
+            analyzer: NetworkHealthAnalyzer instance with cluster_data and ch_util_data
+            override_timestamp: Optional timestamp string to use (for regeneration)
+            override_location: Optional location string to use (for regeneration)
+            save_json: Whether to save the raw data to JSON (default: True)
+            output_filename: Optional custom filename for the report (without extension)
         """
         if override_timestamp:
             timestamp = override_timestamp
@@ -32,9 +40,17 @@ class NetworkReporter:
         else:
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             report_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Use custom filename if provided, otherwise use timestamp-based name
+        if output_filename:
+            filename = output_filename if output_filename.endswith('.md') else f"{output_filename}.md"
+            # Extract base name without extension for JSON
+            base_name = output_filename.replace('.md', '')
+            json_filename = f"{base_name}.json"
+        else:
+            filename = f"report-{timestamp}.md"
+            json_filename = f"report-{timestamp}.json"
             
-        filename = f"report-{timestamp}.md"
-        json_filename = f"report-{timestamp}.json"
         filepath = os.path.join(self.report_dir, filename)
         json_filepath = os.path.join(self.report_dir, json_filename)
 

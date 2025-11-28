@@ -1,6 +1,7 @@
 import logging
 import time
 from .utils import get_val, haversine, get_node_name
+from . import constants
 
 logger = logging.getLogger(__name__)
 
@@ -11,17 +12,17 @@ class NetworkHealthAnalyzer:
         
         # Load thresholds from config or use defaults
         thresholds = self.config.get('thresholds', {})
-        self.ch_util_threshold = thresholds.get('channel_utilization', 25.0)
-        self.air_util_threshold = thresholds.get('air_util_tx', 7.0) # Updated default to 7%
-        self.router_density_threshold = thresholds.get('router_density_threshold', 2000)
-        self.active_threshold_seconds = thresholds.get('active_threshold_seconds', 7200)
-        self.max_nodes_long_fast = self.config.get('max_nodes_for_long_fast', 60)
+        self.ch_util_threshold = thresholds.get('channel_utilization', constants.DEFAULT_CHANNEL_UTILIZATION_THRESHOLD)
+        self.air_util_threshold = thresholds.get('air_util_tx', constants.DEFAULT_AIR_UTIL_TX_THRESHOLD)
+        self.router_density_threshold = thresholds.get('router_density_threshold', constants.DEFAULT_ROUTER_DENSITY_THRESHOLD)
+        self.active_threshold_seconds = thresholds.get('active_threshold_seconds', constants.DEFAULT_ACTIVE_THRESHOLD_SECONDS)
+        self.max_nodes_long_fast = self.config.get('max_nodes_for_long_fast', constants.DEFAULT_MAX_NODES_LONG_FAST)
         
         # Data storage for detailed analysis
         self.cluster_data = []  # Router cluster details with distances
         self.ch_util_data = {}  # Channel utilization analysis
 
-    def analyze(self, nodes, packet_history=None, my_node=None, test_results=None):
+    def analyze(self, nodes: dict, packet_history: list = None, my_node: dict = None, test_results: list = None) -> list:
         """
         Analyzes the node DB and packet history for potential issues.
         Returns a list of issue strings.
@@ -97,7 +98,44 @@ class NetworkHealthAnalyzer:
         return issues
 
 
-    def get_router_stats(self, nodes, test_results=None):
+        return issues
+
+
+    def _calculate_router_distances(self, router: dict, nodes: dict, radius: float) -> tuple:
+        """
+        Helper to calculate neighbors and nearby routers for a given router.
+        Returns: (total_neighbors, nearby_routers_count)
+        """
+        nearby_routers = 0
+        total_neighbors = 0
+        
+        for node_id, node in nodes.items():
+            if node_id == router['id']: continue
+            pos = get_val(node, 'position', {})
+            lat = get_val(pos, 'latitude')
+            lon = get_val(pos, 'longitude')
+            
+            if lat and lon:
+                dist = haversine(router['lat'], router['lon'], lat, lon)
+                if dist < radius:
+                    total_neighbors += 1
+                    # Check if it's also a router
+                    user = get_val(node, 'user', {})
+                    role = get_val(user, 'role')
+                    
+                    is_router_role = False
+                    if isinstance(role, int):
+                         if role in [2, 3, 9]: # ROUTER_CLIENT, ROUTER, ROUTER_LATE
+                             is_router_role = True
+                    elif role in ['ROUTER', 'ROUTER_CLIENT', 'ROUTER_LATE']:
+                         is_router_role = True
+                         
+                    if is_router_role:
+                        nearby_routers += 1
+        
+        return total_neighbors, nearby_routers
+
+    def get_router_stats(self, nodes: dict, test_results: list = None) -> list:
         """
         Calculates detailed statistics for each router.
         Returns a list of dictionaries.
@@ -136,26 +174,8 @@ class NetworkHealthAnalyzer:
         # 2. Analyze Each Router
         for r in routers:
             # A. Neighbors (within configured radius)
-            nearby_routers = 0
-            total_neighbors = 0
             radius = self.router_density_threshold
-            
-            for node_id, node in nodes.items():
-                if node_id == r['id']: continue
-                pos = get_val(node, 'position', {})
-                lat = get_val(pos, 'latitude')
-                lon = get_val(pos, 'longitude')
-                
-                if lat and lon:
-                    dist = haversine(r['lat'], r['lon'], lat, lon)
-                    if dist < radius:
-                        total_neighbors += 1
-                        # Check if it's also a router
-                        # (Simplified check, ideally we'd check against the routers list but this is O(N))
-                        user = get_val(node, 'user', {})
-                        role = get_val(user, 'role')
-                        if role in [2, 3, 'ROUTER', 'ROUTER_CLIENT']:
-                            nearby_routers += 1
+            total_neighbors, nearby_routers = self._calculate_router_distances(r, nodes, radius)
 
             # B. Relay Count
             relay_count = 0
@@ -202,7 +222,7 @@ class NetworkHealthAnalyzer:
             
         return stats
 
-    def check_router_efficiency(self, nodes, test_results=None):
+    def check_router_efficiency(self, nodes: dict, test_results: list = None) -> list:
         """
         Analyzes router placement and efficiency.
         Returns a list of issue strings.
@@ -220,7 +240,7 @@ class NetworkHealthAnalyzer:
 
         return issues
 
-    def analyze_channel_utilization(self, nodes):
+    def analyze_channel_utilization(self, nodes: dict) -> None:
         """
         Analyzes channel utilization across the network.
         Determines if congestion is mesh-wide or isolated to specific nodes.
@@ -265,7 +285,7 @@ class NetworkHealthAnalyzer:
             'affected_count': len(high_util_nodes)
         }
 
-    def check_client_relaying_over_router(self, nodes, test_results):
+    def check_client_relaying_over_router(self, nodes: dict, test_results: list) -> list:
         """
         Detects ineffective routers by checking if nearby CLIENT nodes
         are relaying more frequently than the router itself.
@@ -370,7 +390,7 @@ class NetworkHealthAnalyzer:
         return issues
 
 
-    def check_route_quality(self, nodes, test_results):
+    def check_route_quality(self, nodes: dict, test_results: list) -> list:
         """
         Analyzes the quality of routes found in traceroute tests.
         Checks for Hop Efficiency and Favorite Router usage.
@@ -412,7 +432,7 @@ class NetworkHealthAnalyzer:
 
         return list(set(issues))
 
-    def check_duplication(self, history, nodes):
+    def check_duplication(self, history: list, nodes: dict) -> list:
         """
         Detects if the same message ID is being received multiple times.
         """
@@ -430,7 +450,7 @@ class NetworkHealthAnalyzer:
                 issues.append(f"Spam: Detected {count} duplicates for Packet ID {pkt_id}. Possible routing loop or aggressive re-broadcasting.")
         return issues
 
-    def check_hop_counts(self, history, nodes):
+    def check_hop_counts(self, history: list, nodes: dict) -> list:
         """
         Checks if packets are arriving with high hop counts.
         """
@@ -449,7 +469,7 @@ class NetworkHealthAnalyzer:
 
 
 
-    def check_network_size_and_preset(self, nodes):
+    def check_network_size_and_preset(self, nodes: dict) -> list:
         """
         Checks if network size exceeds recommendations for the current preset.
         Note: We can't easily know the *current* preset of the network just from node DB,
@@ -475,7 +495,7 @@ class NetworkHealthAnalyzer:
              
         return issues
 
-    def check_router_density(self, nodes, test_results=None):
+    def check_router_density(self, nodes: dict, test_results: list = None) -> tuple:
         """
         Checks for high density of routers.
         Identifies clusters of routers within 'router_density_threshold'.
@@ -575,7 +595,7 @@ class NetworkHealthAnalyzer:
         return issues, cluster_data
 
 
-    def check_signal_vs_distance(self, nodes, my_node):
+    def check_signal_vs_distance(self, nodes: dict, my_node: dict) -> list:
         """
         Checks for nodes that are close but have poor SNR (indicating obstruction or antenna issues).
         """

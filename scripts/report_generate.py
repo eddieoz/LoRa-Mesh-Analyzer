@@ -114,44 +114,10 @@ def generate_report_from_json(json_filepath, output_path=None):
     # Use new issues for the report
     analysis_issues = new_issues
     
-    # We need to temporarily override the filename generation if custom output is specified
+    # Determine output filename if provided
+    output_filename = None
     if output_path:
-        # Monkey-patch the generate_report to use custom filename
-        original_generate = reporter.generate_report
-        
-        def custom_generate(nodes, test_results, analysis_issues, local_node=None, router_stats=None, analyzer=None, override_timestamp=None, override_location=None, save_json=True):
-            # Temporarily change the method to use custom filename
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            custom_filename = os.path.basename(output_path)
-            filepath = os.path.join(report_dir, custom_filename)
-            
-            from mesh_analyzer.route_analyzer import RouteAnalyzer
-            route_analyzer = RouteAnalyzer(nodes)
-            route_analysis_local = route_analyzer.analyze_routes(test_results)
-            
-            try:
-                with open(filepath, "w") as f:
-                    f.write(f"# Meshtastic Network Report\n")
-                    f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"**Regenerated from:** {os.path.basename(json_filepath)}\n\n")
-                    
-                    reporter._write_executive_summary(f, nodes, test_results, analysis_issues, local_node)
-                    reporter._write_network_health(f, analysis_issues, analyzer)
-                    
-                    if router_stats:
-                        reporter._write_router_performance_table(f, router_stats)
-                    
-                    reporter._write_route_analysis(f, route_analysis_local)
-                    reporter._write_traceroute_results(f, test_results, nodes, local_node)
-                    reporter._write_recommendations(f, analysis_issues, test_results, analyzer)
-                
-                print(f"✅ Report regenerated successfully: {filepath}")
-                return filepath
-            except Exception as e:
-                print(f"❌ Failed to generate report: {e}")
-                return None
-        
-        reporter.generate_report = custom_generate
+        output_filename = os.path.basename(output_path)
     
     # Extract session metadata
     # Use the 'session' variable already extracted from 'full_data'
@@ -168,7 +134,8 @@ def generate_report_from_json(json_filepath, output_path=None):
         analyzer=analyzer,  # Pass analyzer parameter
         override_timestamp=original_timestamp,
         override_location=test_location,
-        save_json=False # Do not overwrite JSON when regenerating
+        save_json=False, # Do not overwrite JSON when regenerating
+        output_filename=output_filename
     )
     
     return result

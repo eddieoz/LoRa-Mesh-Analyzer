@@ -3,24 +3,26 @@ import time
 import threading
 import meshtastic.util
 from .utils import get_val, haversine
+from . import constants
 
 logger = logging.getLogger(__name__)
 
 class ActiveTester:
-    def __init__(self, interface, priority_nodes=None, auto_discovery_roles=None, auto_discovery_limit=5, online_nodes=None, local_node_id=None, traceroute_timeout=60, test_interval=30, analysis_mode='distance', cluster_radius=2000):
+    def __init__(self, interface, priority_nodes=None, auto_discovery_roles=None, auto_discovery_limit=None, online_nodes=None, local_node_id=None, traceroute_timeout=None, test_interval=None, analysis_mode='distance', cluster_radius=None):
         self.interface = interface
         self.priority_nodes = priority_nodes if priority_nodes else []
-        self.auto_discovery_roles = auto_discovery_roles if auto_discovery_roles else ['ROUTER', 'REPEATER']
-        self.auto_discovery_limit = auto_discovery_limit
+        self.auto_discovery_roles = auto_discovery_roles if auto_discovery_roles else constants.DEFAULT_AUTO_DISCOVERY_ROLES
+        self.auto_discovery_limit = auto_discovery_limit if auto_discovery_limit is not None else constants.DEFAULT_AUTO_DISCOVERY_LIMIT
         self.online_nodes = online_nodes if online_nodes else set()
         self.local_node_id = local_node_id
         self.last_test_time = 0
-        self.min_test_interval = test_interval # Seconds between active tests
+        self.min_test_interval = test_interval if test_interval is not None else constants.DEFAULT_TEST_INTERVAL
         self.current_priority_index = 0
         self.pending_traceroute = None # Store ID of node we are waiting for
-        self.traceroute_timeout = traceroute_timeout # Seconds to wait for a response
+        self.traceroute_timeout = traceroute_timeout if traceroute_timeout is not None else constants.DEFAULT_TRACEROUTE_TIMEOUT
         self.analysis_mode = analysis_mode
-        self.cluster_radius = cluster_radius
+        self.cluster_radius = cluster_radius if cluster_radius is not None else constants.DEFAULT_CLUSTER_RADIUS
+        self.hop_limit = constants.DEFAULT_HOP_LIMIT
         
         # Reporting Data
         self.test_results = [] # List of dicts: {node_id, status, rtt, hops, snr, timestamp}
@@ -30,7 +32,7 @@ class ActiveTester:
         # Thread safety
         self.lock = threading.Lock()
 
-    def run_next_test(self):
+    def run_next_test(self) -> None:
         """
         Runs the next scheduled test. Prioritizes nodes in the config list.
         """
@@ -67,7 +69,7 @@ class ActiveTester:
         
         self.current_priority_index = (self.current_priority_index + 1) % len(self.priority_nodes)
 
-    def _auto_discover_nodes(self):
+    def _auto_discover_nodes(self) -> list:
         """
         Selects nodes based on lastHeard timestamp, roles, and geolocation.
         Uses the existing node database instead of waiting for packets.
@@ -223,7 +225,7 @@ class ActiveTester:
         selected_ids = [c['id'] for c in final_candidates]
         return selected_ids
 
-    def _get_router_cluster_nodes(self):
+    def _get_router_cluster_nodes(self) -> list:
         """
         Selects nodes that are within cluster_radius of known routers.
         """
@@ -305,7 +307,7 @@ class ActiveTester:
         
         return selected
 
-    def send_traceroute(self, dest_node_id):
+    def send_traceroute(self, dest_node_id: str) -> None:
         """
         Sends a traceroute request to the destination node.
         Runs in a separate thread to avoid blocking the main loop.
@@ -314,7 +316,7 @@ class ActiveTester:
         
         def _send_task():
             try:
-                self.interface.sendTraceRoute(dest_node_id, hopLimit=7)
+                self.interface.sendTraceRoute(dest_node_id, hopLimit=self.hop_limit)
                 logger.debug(f"Traceroute command sent to {dest_node_id}")
             except Exception as e:
                 logger.error(f"Failed to send traceroute to {dest_node_id}: {e}")
@@ -405,7 +407,7 @@ class ActiveTester:
                 self.pending_traceroute = None # Clear pending if this was the node we were waiting for
                 self.last_test_time = time.time() # Start cooldown
 
-    def record_timeout(self, node_id):
+    def record_timeout(self, node_id: str) -> None:
         """
         Records a failed test result (timeout).
         """
@@ -437,11 +439,4 @@ class ActiveTester:
                 logger.info(f"Completed Test Cycle {self.completed_cycles}")
                 self.nodes_tested_in_cycle.clear()
 
-    def flood_test(self, dest_node_id, count=5):
-        """
-        CAUTION: Sends multiple messages to test reliability.
-        """
-        logger.warning(f"Starting FLOOD TEST to {dest_node_id} (Count: {count})")
-        for i in range(count):
-            self.interface.sendText(f"Flood test {i+1}/{count}", destinationId=dest_node_id)
-            time.sleep(5) # Wait 5 seconds between messages
+

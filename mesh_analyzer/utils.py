@@ -3,7 +3,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def haversine(lat1, lon1, lat2, lon2):
+def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Calculate the great circle distance between two points 
     on the earth (specified in decimal degrees).
@@ -28,7 +28,7 @@ def haversine(lat1, lon1, lat2, lon2):
         logger.debug(f"Error calculating haversine distance: {e}")
         return 0
 
-def get_val(obj, key, default=None):
+def get_val(obj: object, key: str, default: any = None) -> any:
     """
     Safely retrieves a value from an object or dictionary.
     Handles nested attribute access if key contains dots (e.g. 'user.id').
@@ -50,7 +50,7 @@ def get_val(obj, key, default=None):
     except Exception:
         return default
 
-def get_node_name(node, node_id=None):
+def get_node_name(node: dict, node_id: str = None) -> str:
     """
     Helper to get a human-readable name for a node.
     """

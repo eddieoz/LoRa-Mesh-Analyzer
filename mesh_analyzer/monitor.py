@@ -9,6 +9,8 @@ import meshtastic.util
 from .analyzer import NetworkHealthAnalyzer
 from .active_tests import ActiveTester
 from .reporter import NetworkReporter
+from .config_validator import ConfigValidator
+from . import constants
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -26,14 +28,13 @@ class MeshMonitor:
         self.hostname = hostname
         self.config = self.load_config(config_file)
         self.analyzer = NetworkHealthAnalyzer(config=self.config, ignore_no_position=ignore_no_position)
-        self.reporter = NetworkReporter(report_dir="reports", config=self.config)
+        self.reporter = NetworkReporter(report_dir=self.config.get('report_dir', constants.DEFAULT_REPORT_DIR), config=self.config)
         self.active_tester = None 
         self.running = False
-        self.config = self.load_config(config_file)
         self.packet_history = [] # List of recent packets for duplication check
         
         # Configure Log Level
-        log_level_str = self.config.get('log_level', 'info').upper()
+        log_level_str = self.config.get('log_level', constants.DEFAULT_LOG_LEVEL).upper()
         log_level = getattr(logging, log_level_str, logging.INFO)
         logger.setLevel(log_level)
         logging.getLogger().setLevel(log_level) # Set root logger too to capture lib logs if needed
@@ -43,10 +44,10 @@ class MeshMonitor:
         # Discovery State
         self.discovery_mode = False
         self.discovery_start_time = 0
-        self.discovery_wait_seconds = self.config.get('discovery_wait_seconds', 60)
+        self.discovery_wait_seconds = self.config.get('discovery_wait_seconds', constants.DEFAULT_DISCOVERY_WAIT_SECONDS)
         self.online_nodes = set()
 
-    def load_config(self, config_file):
+    def load_config(self, config_file: str) -> dict:
         if os.path.exists(config_file):
             try:
                 with open(config_file, 'r') as f:
@@ -55,7 +56,7 @@ class MeshMonitor:
                 logger.error(f"Error loading config file: {e}")
         return {}
 
-    def start(self):
+    def start(self) -> None:
         logger.info(f"Connecting to Meshtastic node via {self.interface_type}...")
         try:
             # ... interface init ...
@@ -69,7 +70,7 @@ class MeshMonitor:
                 raise ValueError(f"Unknown interface type: {self.interface_type}")
 
             # Check local config
-            self.check_local_config()
+            ConfigValidator.check_local_config(self.interface)
 
             priority_nodes = self.config.get('priority_nodes', [])
             auto_discovery_roles = self.config.get('auto_discovery_roles', ['ROUTER', 'REPEATER'])
@@ -178,76 +179,17 @@ class MeshMonitor:
             logger.error(f"Failed to connect or run: {e}")
             self.stop()
 
-    def check_local_config(self):
-        """
-        Analyzes the local node's configuration and warns about non-optimal settings.
-        """
-        logger.info("Checking local node configuration...")
-        try:
-            # Wait a moment for node to populate if needed (though interface init usually does it)
-            node = None
-            if hasattr(self.interface, 'localNode'):
-                node = self.interface.localNode
-            
-            if not node:
-                logger.warning("Could not access local node information.")
-                return
 
-            # 1. Check Role
-            # We access the protobuf config directly
-            try:
-                # Note: node.config might be a property of the node object
-                # In some versions, it's node.localConfig
-                # Let's try to access it safely
-                if hasattr(node, 'config'):
-                    config = node.config
-                elif hasattr(node, 'localConfig'):
-                    config = node.localConfig
-                else:
-                    logger.warning("Could not find config attribute on local node.")
-                    return
 
-                from meshtastic.protobuf import config_pb2
-                role = config.device.role
-                role_name = config_pb2.Config.DeviceConfig.Role.Name(role)
-                
-                if role_name in ['ROUTER', 'ROUTER_CLIENT', 'REPEATER']:
-                    logger.warning(f" [!] Local Node Role is '{role_name}'.")
-                    logger.warning("     Recommended for monitoring: 'CLIENT' or 'CLIENT_MUTE'.")
-                    logger.warning("     (Active monitoring works best when the monitor itself isn't a router)")
-                else:
-                    logger.info(f"Local Node Role: {role_name} (OK)")
-            except Exception as e:
-                logger.warning(f"Could not verify role: {e}")
-
-            # 2. Check Hop Limit
-            try:
-                if hasattr(node, 'config'):
-                    config = node.config
-                elif hasattr(node, 'localConfig'):
-                    config = node.localConfig
-                
-                hop_limit = config.lora.hop_limit
-                if hop_limit > 3:
-                    logger.warning(f" [!] Local Node Hop Limit is {hop_limit}.")
-                    logger.warning("     Recommended: 3. High hop limits can cause network congestion.")
-                else:
-                    logger.info(f"Local Node Hop Limit: {hop_limit} (OK)")
-            except Exception as e:
-                logger.warning(f"Could not verify hop limit: {e}")
-
-        except Exception as e:
-            logger.error(f"Failed to check local config: {e}")
-
-    def stop(self):
+    def stop(self) -> None:
         self.running = False
         if self.interface:
             self.interface.close()
 
-    def on_receive(self, packet, interface):
-        try:
-            # Store packet for analysis
-            # We need: id, fromId, hopLimit (if available)
+    def on_receive(self, packet: dict, interface) -> None:
+        """
+        Callback for received packets.
+        """    # We need: id, fromId, hopLimit (if available)
             pkt_info = {
                 'id': packet.get('id'),
                 'fromId': packet.get('fromId'),
@@ -290,10 +232,16 @@ class MeshMonitor:
         except Exception as e:
             logger.error(f"Error parsing packet: {e}")
 
-    def on_connection(self, interface, topic=pub.AUTO_TOPIC):
+    def on_connection(self, interface, topic=pub.AUTO_TOPIC) -> None:
+        """
+        Callback for connection established.
+        """
         logger.info("Connection established signal received.")
 
-    def on_node_info(self, node, interface):
+    def on_node_info(self, nodeInfo: dict, interface) -> None:
+        """
+        Callback for node info updates.
+        """
         # logger.debug(f"Node info updated: {node}")
         pass
 
@@ -318,7 +266,7 @@ class MeshMonitor:
                     node['position']['longitude'] = pos['lon']
                     logger.debug(f"Applied manual position to {node_id}: {pos}")
 
-    def main_loop(self):
+    def main_loop(self) -> None:
         logger.info("Starting monitoring loop...")
         while self.running:
             try:
