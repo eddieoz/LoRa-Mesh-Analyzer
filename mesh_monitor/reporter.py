@@ -33,7 +33,7 @@ class NetworkReporter:
                 f.write(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
                 # 1. Executive Summary
-                self._write_executive_summary(f, nodes, test_results, analysis_issues)
+                self._write_executive_summary(f, nodes, test_results, analysis_issues, local_node)
 
                 # 2. Network Health (Analysis Findings)
                 self._write_network_health(f, analysis_issues)
@@ -57,7 +57,7 @@ class NetworkReporter:
             logger.error(f"Failed to generate report: {e}")
             return None
 
-    def _write_executive_summary(self, f, nodes, test_results, analysis_issues):
+    def _write_executive_summary(self, f, nodes, test_results, analysis_issues, local_node=None):
         f.write("## 1. Executive Summary\n")
         
         total_nodes = len(nodes)
@@ -70,6 +70,42 @@ class NetworkReporter:
         # Get unique nodes from test results (selected online nodes)
         unique_tested_nodes = len(set([r.get('node_id') for r in test_results]))
         
+        # Get Local Position
+        local_pos_str = "Unknown"
+        if local_node:
+            # Try to get ID to look up in nodes dict (which has the most up-to-date position including manual overrides)
+            local_id = None
+            if hasattr(local_node, 'nodeNum'):
+                local_id = f"!{local_node.nodeNum:08x}"
+            elif isinstance(local_node, dict):
+                 # Try to find ID in dict
+                 user = local_node.get('user', {})
+                 if 'id' in user:
+                     local_id = user['id']
+            
+            if local_id and local_id in nodes:
+                pos = get_val(nodes[local_id], 'position', {})
+                lat = get_val(pos, 'latitude')
+                lon = get_val(pos, 'longitude')
+                if lat is not None and lon is not None:
+                    local_pos_str = f"{lat:.4f}, {lon:.4f}"
+            
+            # Fallback to local_node object if not found in dict or no ID
+            if local_pos_str == "Unknown":
+                 if hasattr(local_node, 'position'):
+                     # Check if it's a dict or object
+                     pos = local_node.position
+                     if isinstance(pos, dict):
+                         lat = pos.get('latitude')
+                         lon = pos.get('longitude')
+                     else:
+                         lat = getattr(pos, 'latitude', None)
+                         lon = getattr(pos, 'longitude', None)
+                     
+                     if lat is not None and lon is not None:
+                         local_pos_str = f"{lat:.4f}, {lon:.4f}"
+
+        f.write(f"- **Test Location:** {local_pos_str}\n")
         f.write(f"- **Total Nodes Visible:** {total_nodes}\n")
         f.write(f"- **Selected Online Nodes:** {unique_tested_nodes}\n")
         f.write(f"- **Total Tests Performed:** {total_tests}\n")
@@ -287,23 +323,46 @@ class NetworkReporter:
         
         recs = []
         
-        # Analyze issues for recommendations
+        # 1. Topology & Placement (Consolidated from Analysis)
+        # Extract "Best positioned..." recommendations
+        topology_recs = []
+        for issue in analysis_issues:
+            if "Topology: High Router Density!" in issue:
+                # Extract the recommendation part
+                if "Best positioned seems to be" in issue:
+                    # Find where the recommendation starts
+                    start_idx = issue.find("Best positioned seems to be")
+                    if start_idx != -1:
+                        topology_recs.append(f"- **Optimize Cluster:** {issue[start_idx:]}")
+                else:
+                    # Fallback if format is different
+                    topology_recs.append(f"- **Optimize Placement:** {issue}")
+            elif "Topology: Node" in issue and "hops away" in issue:
+                 # "Topology: Node 'X' is 4 hops away."
+                 topology_recs.append(f"- **Improve Coverage:** {issue.replace('Topology: ', '')}")
+
+        if topology_recs:
+            recs.extend(topology_recs)
+        elif any("High Density" in i for i in analysis_issues):
+             # Fallback for generic density issue if not caught above
+             recs.append("- **Optimize Placement:** Routers are too close together. Convert redundant routers to clients.")
+
+        # 2. Congestion
         if any("Congestion" in i for i in analysis_issues):
             recs.append("- **Reduce Traffic:** High channel utilization detected. Identify spamming nodes or reduce broadcast frequency.")
-        
+
+        # 3. Configuration
         if any("ROUTER_CLIENT" in i for i in analysis_issues):
             recs.append("- **Fix Roles:** Deprecated `ROUTER_CLIENT` role detected. Change these nodes to `CLIENT` or `CLIENT_MUTE`.")
-            
-        if any("High Density" in i for i in analysis_issues):
-            recs.append("- **Optimize Placement:** Routers are too close together (exceeding configured density threshold). Convert redundant routers to clients to reduce noise.")
-
+        
         if any("Network Size" in i for i in analysis_issues):
             recs.append("- **Adjust Presets:** Network size exceeds recommendations for the current estimated preset. Consider switching to a faster preset (e.g. LONG_MODERATE or SHORT_FAST).")
-            
+
+        # 4. Hardware / Signal
         if any("poor SNR" in i for i in analysis_issues):
             recs.append("- **Check Hardware:** Nodes with poor SNR at close range may have antenna issues or bad placement.")
 
-        # Analyze test results
+        # 5. Connectivity (Traceroute Failures)
         failures = [r for r in test_results if r.get('status') != 'success']
         if failures:
             recs.append(f"- **Investigate Connectivity:** {len(failures)} nodes failed traceroute tests. Check if they are online or if the path is broken.")
