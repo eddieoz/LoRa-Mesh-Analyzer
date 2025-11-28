@@ -52,7 +52,12 @@ If `priority_nodes` is empty in `config.yaml`, the monitor will automatically se
 ## Installation
 
 1.  **Clone the repository** (if applicable) or navigate to the project folder.
-2.  **Install Dependencies**:
+2.  **Set up a Virtual Environment** (Recommended):
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    ```
+3.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
