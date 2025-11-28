@@ -32,6 +32,11 @@ auto_discovery_limit: 5
 # Generate report after N full testing cycles
 report_cycles: 1
 
+# Report Output Formats
+# Options: 'markdown', 'html'
+report_output_formats:
+  - markdown
+
 # Active Testing Settings
 # Timeout for traceroute response (in seconds)
 traceroute_timeout: 90

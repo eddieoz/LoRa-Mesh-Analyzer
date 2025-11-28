@@ -189,7 +189,8 @@ class MeshMonitor:
     def on_receive(self, packet: dict, interface) -> None:
         """
         Callback for received packets.
-        """    # We need: id, fromId, hopLimit (if available)
+        """
+        try:
             pkt_info = {
                 'id': packet.get('id'),
                 'fromId': packet.get('fromId'),

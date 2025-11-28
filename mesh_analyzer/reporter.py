@@ -7,6 +7,9 @@ from .utils import get_val, haversine, get_node_name
 
 from mesh_analyzer.route_analyzer import RouteAnalyzer
 
+import io
+import markdown
+
 logger = logging.getLogger(__name__)
 
 class NetworkReporter:
@@ -19,7 +22,7 @@ class NetworkReporter:
 
     def generate_report(self, nodes: dict, test_results: list, analysis_issues: list, local_node: dict = None, router_stats: list = None, analyzer: object = None, override_timestamp: str = None, override_location: str = None, save_json: bool = True, output_filename: str = None) -> str:
         """
-        Generates a Markdown report based on collected data.
+        Generates a Markdown and/or HTML report based on collected data.
         Also persists all raw data to JSON format.
         
         Args:
@@ -41,58 +44,99 @@ class NetworkReporter:
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             report_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Use custom filename if provided, otherwise use timestamp-based name
+        # Determine base filename
         if output_filename:
-            filename = output_filename if output_filename.endswith('.md') else f"{output_filename}.md"
-            # Extract base name without extension for JSON
-            base_name = output_filename.replace('.md', '')
-            json_filename = f"{base_name}.json"
+            base_name = output_filename.replace('.md', '').replace('.html', '')
         else:
-            filename = f"report-{timestamp}.md"
-            json_filename = f"report-{timestamp}.json"
+            base_name = f"report-{timestamp}"
             
-        filepath = os.path.join(self.report_dir, filename)
+        json_filename = f"{base_name}.json"
         json_filepath = os.path.join(self.report_dir, json_filename)
 
-        logger.info(f"Generating network report: {filepath}")
+        logger.info(f"Generating network report: {base_name}")
 
         # Run Route Analysis
         route_analyzer = RouteAnalyzer(nodes)
         route_analysis = route_analyzer.analyze_routes(test_results)
 
         try:
-            # --- Generate Markdown Report ---
-            with open(filepath, "w") as f:
-                # Header
-                f.write(f"# Meshtastic Network Report\n")
-                f.write(f"**Date:** {report_date}\n\n")
+            # --- Generate Report Content ---
+            # We build the markdown content in memory first
+            f = io.StringIO()
+            
+            # Header
+            f.write(f"# Meshtastic Network Report\n")
+            f.write(f"**Date:** {report_date}\n\n")
 
-                # Calculate location if not overridden
-                if override_location:
-                    test_location = override_location
-                else:
-                    test_location = self._get_location_string(nodes, local_node)
+            # Calculate location if not overridden
+            if override_location:
+                test_location = override_location
+            else:
+                test_location = self._get_location_string(nodes, local_node)
 
-                # 1. Executive Summary
-                self._write_executive_summary(f, nodes, test_results, analysis_issues, test_location)
+            # 1. Executive Summary
+            self._write_executive_summary(f, nodes, test_results, analysis_issues, test_location)
 
-                # 2. Network Health (Analysis Findings)
-                self._write_network_health(f, analysis_issues, analyzer)
+            # 2. Network Health (Analysis Findings)
+            self._write_network_health(f, analysis_issues, analyzer)
+            
+            # 2.1 Router Performance Table (New)
+            if router_stats:
+                self._write_router_performance_table(f, router_stats)
+
+            # 3. Route Analysis (New Section)
+            self._write_route_analysis(f, route_analysis)
+
+            # 4. Traceroute Results
+            self._write_traceroute_results(f, test_results, nodes, local_node)
+
+            # 5. Recommendations
+            self._write_recommendations(f, analysis_issues, test_results, analyzer)
+            
+            # Get the full markdown content
+            markdown_content = f.getvalue()
+            f.close()
+
+            # --- Output to Files ---
+            output_formats = self.config.get('report_output_formats', ['markdown'])
+            generated_files = []
+
+            # 1. Markdown Output
+            if 'markdown' in output_formats:
+                md_filepath = os.path.join(self.report_dir, f"{base_name}.md")
+                with open(md_filepath, "w") as md_file:
+                    md_file.write(markdown_content)
+                generated_files.append(md_filepath)
+                logger.info(f"Report generated: {md_filepath}")
+
+            # 2. HTML Output
+            if 'html' in output_formats:
+                html_filepath = os.path.join(self.report_dir, f"{base_name}.html")
                 
-                # 2.1 Router Performance Table (New)
-                if router_stats:
-                    self._write_router_performance_table(f, router_stats)
-
-                # 3. Route Analysis (New Section)
-                self._write_route_analysis(f, route_analysis)
-
-                # 4. Traceroute Results
-                self._write_traceroute_results(f, test_results, nodes, local_node)
-
-                # 5. Recommendations
-                self._write_recommendations(f, analysis_issues, test_results, analyzer)
-
-            logger.info(f"Report generated successfully: {filepath}")
+                # Basic CSS for better readability
+                css = """
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max_width: 960px; margin: 0 auto; padding: 20px; }
+                    h1, h2, h3 { color: #2c3e50; margin-top: 1.5em; }
+                    h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                    h2 { border-bottom: 1px solid #eee; padding-bottom: 5px; }
+                    table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                    th { background-color: #f8f9fa; font-weight: bold; }
+                    tr:nth-child(even) { background-color: #f9f9f9; }
+                    code { background-color: #f5f5f5; padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+                    ul { padding-left: 20px; }
+                    li { margin-bottom: 5px; }
+                </style>
+                """
+                
+                html_content = markdown.markdown(markdown_content, extensions=['tables', 'fenced_code'])
+                full_html = f"<!DOCTYPE html>\n<html>\n<head>\n<meta charset='utf-8'>\n<title>Meshtastic Network Report - {report_date}</title>\n{css}\n</head>\n<body>\n{html_content}\n</body>\n</html>"
+                
+                with open(html_filepath, "w") as html_file:
+                    html_file.write(full_html)
+                generated_files.append(html_filepath)
+                logger.info(f"Report generated: {html_filepath}")
             
             # --- Persist Raw Data to JSON ---
             if save_json:
@@ -112,7 +156,10 @@ class NetworkReporter:
                 except Exception as json_e:
                     logger.error(f"Failed to save JSON data: {json_e}")
             
-            return filepath
+            # Return the primary file path (prefer markdown if available, else first generated)
+            if generated_files:
+                return generated_files[0]
+            return None
         except Exception as e:
             logger.error(f"Failed to generate report: {e}")
             return None
